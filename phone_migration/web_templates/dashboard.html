@@ -5,27 +5,27 @@
 {% block content %}
 <div class="grid">
     <div class="card">
-        <h2>📱 Device Status</h2>
+        <h2><i class="fas fa-mobile-alt"></i> Device Status</h2>
         <div id="device-status">
             <div class="spinner"></div>
         </div>
     </div>
     
     <div class="card">
-        <h2>⚡ Quick Actions</h2>
+        <h2><i class="fas fa-bolt"></i> Quick Actions</h2>
         <div style="display: flex; flex-direction: column; gap: 10px;">
-            <button class="btn btn-success" onclick="runSync()">▶️ Run All Rules</button>
-            <button class="btn" onclick="runSyncWithNotify()">🔔 Run with Notifications</button>
-            <a href="/rules" class="btn btn-secondary">✏️ Manage Rules</a>
-            <button class="btn btn-secondary" onclick="refreshStatus()">🔄 Refresh Status</button>
+            <button class="btn btn-success" onclick="runSync()"><i class="fas fa-play"></i> Run All Rules</button>
+            <button class="btn" onclick="runSyncWithNotify()"><i class="fas fa-bell"></i> Run with Notifications</button>
+            <a href="/rules" class="btn btn-secondary"><i class="fas fa-cog"></i> Manage Rules</a>
+            <button class="btn btn-secondary" onclick="refreshStatus()"><i class="fas fa-sync-alt"></i> Refresh Status</button>
         </div>
     </div>
 </div>
 
 <div class="card">
-    <h2>📊 Recent Activity</h2>
+    <h2><i class="fas fa-chart-line"></i> Recent Activity</h2>
     <div id="activity-log">
-        <p style="color: #999;">No recent activity</p>
+        <p style="color: #64748b;">No recent activity</p>
     </div>
 </div>
 
@@ -44,23 +44,23 @@
             
             const statusHtml = status.connected
                 ? `
-                    <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px;">
-                        <span class="status-badge connected">✓ Connected</span>
+                    <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 16px;">
+                        <span class="status-badge connected"><i class="fas fa-check-circle"></i> Connected</span>
                     </div>
-                    <div style="color: #666;">
-                        <p><strong>Device:</strong> ${status.device_name}</p>
-                        <p><strong>Profile:</strong> ${status.profile_name}</p>
-                        <p><strong>Rules:</strong> ${status.rule_count} configured</p>
+                    <div style="color: #94a3b8; line-height: 1.8;">
+                        <p><strong style="color: #cbd5e1;">Device:</strong> ${status.device_name}</p>
+                        <p><strong style="color: #cbd5e1;">Profile:</strong> ${status.profile_name}</p>
+                        <p><strong style="color: #cbd5e1;">Rules:</strong> ${status.rule_count} configured</p>
                     </div>
                 `
                 : `
-                    <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px;">
-                        <span class="status-badge disconnected">✗ Disconnected</span>
+                    <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 16px;">
+                        <span class="status-badge disconnected"><i class="fas fa-times-circle"></i> Disconnected</span>
                     </div>
-                    <div style="color: #666;">
+                    <div style="color: #94a3b8; line-height: 1.8;">
                         <p>No phone connected or device not registered</p>
-                        <p style="margin-top: 10px; font-size: 14px;">
-                            Connect your phone via USB and enable File Transfer mode
+                        <p style="margin-top: 10px; font-size: 14px; color: #64748b;">
+                            <i class="fas fa-info-circle"></i> Connect your phone via USB and enable File Transfer mode
                         </p>
                     </div>
                 `;
