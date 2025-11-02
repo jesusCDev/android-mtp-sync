@@ -18,6 +18,7 @@ class Colors:
     WHITE = '\033[97m'
     BRIGHT_BLUE = '\033[94m'
     BRIGHT_CYAN = '\033[96m'
+    BRIGHT_YELLOW = '\033[93m'
     BRIGHT_WHITE = '\033[97;1m'
 
 def shorten_path(path_str: str) -> str:
