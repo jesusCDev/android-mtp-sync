@@ -182,9 +182,9 @@
         .btn {
             display: inline-block;
             padding: 11px 20px;
-            background: var(--accent);
-            color: #FFFFFF;
-            border: 1px solid transparent;
+            background: transparent;
+            color: var(--text);
+            border: 1px solid var(--border-subtle);
             border-radius: var(--radius-pill);
             font-size: 14px;
             font-weight: 500;
@@ -194,7 +194,7 @@
         }
         
         .btn:hover {
-            background: #9570E3;
+            background: var(--surface-hover);
             border-color: var(--border-strong);
         }
         
@@ -203,32 +203,37 @@
         }
         
         .btn-secondary {
-            background: var(--surface);
+            background: transparent;
             border: 1px solid var(--border-subtle);
-            color: var(--text);
+            color: var(--text-muted);
         }
         
         .btn-secondary:hover {
-            background: var(--surface-hover);
-            border-color: var(--border-strong);
+            background: var(--surface);
+            border-color: var(--border-subtle);
+            color: var(--text);
         }
         
         .btn-danger {
-            background: var(--danger);
+            background: transparent;
+            color: var(--danger);
+            border-color: var(--danger);
         }
         
         .btn-danger:hover {
-            background: #F26464;
-            border-color: var(--border-strong);
+            background: rgba(239,68,68,0.1);
+            border-color: var(--danger);
         }
         
         .btn-success {
-            background: var(--success);
+            background: transparent;
+            color: var(--success);
+            border-color: var(--success);
         }
         
         .btn-success:hover {
-            background: #2DD869;
-            border-color: var(--border-strong);
+            background: rgba(34,197,94,0.1);
+            border-color: var(--success);
         }
         
         /* Form Elements */
