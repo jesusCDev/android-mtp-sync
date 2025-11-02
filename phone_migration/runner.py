@@ -74,12 +74,15 @@ def run_for_connected_device(config: Dict[str, Any], verbose: bool = False, dry_
         dry_run: Print actions without executing
         rule_ids: Optional list of specific rule IDs to run (ignores manual_only flag)
     """
+    # Print program header
+    print(f"\n{Colors.BOLD}{Colors.BRIGHT_WHITE}{'='*60}{Colors.RESET}")
+    print(f"{Colors.BOLD}{Colors.BRIGHT_WHITE}📱 Phone Migration Tool{Colors.RESET}")
+    print(f"{Colors.BOLD}{Colors.BRIGHT_WHITE}{'='*60}{Colors.RESET}\n")
+    
     # Set dry-run mode
     if dry_run:
         gio_utils.DRY_RUN = True
-        print(f"\n{Colors.BOLD}{Colors.YELLOW}{'='*60}{Colors.RESET}")
-        print(f"{Colors.BOLD}{Colors.YELLOW}[DRY RUN MODE - Preview Only]{Colors.RESET}")
-        print(f"{Colors.BOLD}{Colors.YELLOW}{'='*60}{Colors.RESET}\n")
+        print(f"{Colors.BOLD}{Colors.YELLOW}[DRY RUN MODE - Preview Only]{Colors.RESET}\n")
     
     # Detect device
     print(f"{Colors.DIM}Detecting connected device...{Colors.RESET}")
@@ -168,6 +171,12 @@ def run_for_connected_device(config: Dict[str, Any], verbose: bool = False, dry_
                 total_stats["errors"] += stats.get("errors", 0)
                 total_stats["backed_up"] += stats.get("copied", 0)  # Backed up = files copied without deletion
                 total_stats["folders"] += stats.get("folders", 0)
+            
+            elif mode == "smart_copy":
+                stats = operations.run_smart_copy_rule(rule, device_info, verbose)
+                total_stats["copied"] += stats.get("copied", 0)
+                total_stats["errors"] += stats.get("errors", 0)
+                total_stats["backed_up"] += stats.get("copied", 0) + stats.get("resumed", 0)  # Total including resumed
             
             elif mode == "sync":
                 stats = operations.run_sync_rule(rule, device_info, verbose)

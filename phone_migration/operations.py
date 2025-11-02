@@ -3,7 +3,7 @@
 import os
 from pathlib import Path
 from typing import Any, Dict, Set
-from . import gio_utils, paths
+from . import gio_utils, paths, state
 
 # ANSI color codes
 class Colors:
@@ -140,6 +140,175 @@ def _process_copy_directory(source_uri: str, dest_dir: Path,
                         print(f"  Warning: Copy verification failed for {entry}")
             else:
                 stats["errors"] += 1
+
+
+def run_smart_copy_rule(rule: Dict[str, Any], device: Dict[str, Any], verbose: bool = False) -> Dict[str, int]:
+    """
+    Execute a smart copy rule: resumable copy with progress tracking.
+    
+    Args:
+        rule: Rule dictionary with phone_path, desktop_path, id
+        device: Device dictionary with activation_uri
+        verbose: Print verbose output
+    
+    Returns:
+        Dictionary with counts: copied, resumed, skipped, failed, errors
+    """
+    activation_uri = device.get("activation_uri", "")
+    phone_path = rule.get("phone_path", "")
+    desktop_path_str = rule.get("desktop_path", "")
+    rule_id = rule.get("id", "unknown")
+    
+    # Build URIs and paths
+    source_uri = paths.build_phone_uri(activation_uri, phone_path)
+    dest_dir = paths.expand_desktop(desktop_path_str)
+    
+    print(f"\n{Colors.BOLD}{Colors.BRIGHT_YELLOW}💡 Smart Copy:{Colors.RESET} {Colors.CYAN}{phone_path}{Colors.RESET} {Colors.DIM}→{Colors.RESET} {Colors.GREEN}{shorten_path(dest_dir)}{Colors.RESET}")
+    
+    # Create destination directory
+    paths.ensure_dir(dest_dir)
+    
+    # Load previous state
+    rule_state = state.load_rule_state(rule_id)
+    already_copied = rule_state["copied"]
+    
+    # Show resume info if applicable
+    if len(already_copied) > 0:
+        print(f"\n  {Colors.CYAN}ℹ️  Resuming from previous run{Colors.RESET}")
+        print(f"  {Colors.GREEN}✓ Already copied:{Colors.RESET} {len(already_copied)} files")
+    
+    print(f"\n  {Colors.DIM}Scanning source directory...{Colors.RESET}")
+    
+    # Build list of ALL files in source (recursive)
+    all_files = []
+    _build_file_list(source_uri, "", all_files)
+    
+    total_files = len(all_files)
+    if total_files == 0:
+        print(f"  {Colors.YELLOW}No files found in source directory{Colors.RESET}")
+        return {"copied": 0, "resumed": len(already_copied), "skipped": 0, "failed": 0, "errors": 0}
+    
+    # Filter out already-copied files
+    remaining_files = [f for f in all_files if f not in already_copied]
+    
+    print(f"  {Colors.DIM}Found:{Colors.RESET} {total_files} total files")
+    if len(already_copied) > 0:
+        print(f"  {Colors.DIM}→ Remaining:{Colors.RESET} {len(remaining_files)} files to copy\n")
+    else:
+        print()
+    
+    # Track statistics
+    stats = {
+        "copied": 0,
+        "resumed": len(already_copied),
+        "skipped": 0,
+        "failed": 0,
+        "errors": 0
+    }
+    
+    # Save initial state with total count
+    state.save_rule_state(rule_id, already_copied, rule_state["failed"], "in_progress", total_files)
+    
+    # Copy remaining files one by one
+    for i, rel_path in enumerate(remaining_files, 1):
+        # Build source and dest paths
+        file_parts = rel_path.split('/')
+        current_uri = source_uri
+        for part in file_parts:
+            current_uri = f"{current_uri}/{part}" if current_uri.endswith('/') else f"{current_uri}/{part}"
+        
+        # Destination path
+        dest_file_path = dest_dir / rel_path
+        paths.ensure_dir(dest_file_path.parent)
+        
+        # Check for duplicates and get final destination
+        dest_file = paths.next_available_name(dest_file_path.parent, dest_file_path.name)
+        
+        # Progress indicator
+        current_total = len(already_copied) + i
+        percent = (current_total / total_files) * 100
+        
+        if verbose or (i % 10 == 0):  # Show every 10th file or all in verbose
+            filename = file_parts[-1]
+            print(f"  {Colors.DIM}[{current_total}/{total_files} - {percent:.1f}%]{Colors.RESET} {filename}")
+        
+        # Try to copy the file
+        try:
+            if gio_utils.gio_copy(current_uri, str(dest_file), recursive=False, overwrite=False, verbose=False):
+                # Verify copy
+                if gio_utils.DRY_RUN or (dest_file.exists() and dest_file.stat().st_size > 0):
+                    stats["copied"] += 1
+                    # Mark as copied in state
+                    state.mark_file_copied(rule_id, rel_path)
+                else:
+                    stats["failed"] += 1
+                    state.mark_file_failed(rule_id, rel_path, "Copy verification failed")
+            else:
+                stats["failed"] += 1
+                state.mark_file_failed(rule_id, rel_path, "Copy command failed")
+        except KeyboardInterrupt:
+            # Handle Ctrl+C gracefully
+            print(f"\n\n  {Colors.YELLOW}⚠ Interrupted!{Colors.RESET} Progress saved.")
+            print(f"  {Colors.CYAN}📋 To resume:{Colors.RESET} phone-sync --run -r {rule_id} -y\n")
+            raise
+        except Exception as e:
+            stats["errors"] += 1
+            stats["failed"] += 1
+            state.mark_file_failed(rule_id, rel_path, str(e))
+            if verbose:
+                print(f"  {Colors.RED}Error:{Colors.RESET} {e}")
+    
+    # Check if complete
+    final_copied_count = len(already_copied) + stats["copied"]
+    if final_copied_count >= total_files - stats["failed"]:
+        # All done! Clear state
+        print(f"\n  {Colors.GREEN}✓ Smart copy complete!{Colors.RESET} All files copied.")
+        print(f"  {Colors.DIM}🗑️  State cleared.{Colors.RESET}")
+        state.mark_rule_complete(rule_id)
+    elif stats["failed"] > 0:
+        print(f"\n  {Colors.YELLOW}⚠ {stats['failed']} files failed.{Colors.RESET} Run again to retry.")
+    
+    # Summary
+    print(f"\n  {Colors.GREEN}✓ Copied:{Colors.RESET}   {stats['copied']} files (this run)")
+    if stats["resumed"] > 0:
+        print(f"  {Colors.CYAN}↻ Resumed:{Colors.RESET}  {stats['resumed']} files (previous runs)")
+    if stats["failed"] > 0:
+        print(f"  {Colors.RED}✕ Failed:{Colors.RESET}   {stats['failed']} files")
+    
+    return stats
+
+
+def _build_file_list(source_uri: str, rel_path: str, file_list: list) -> None:
+    """
+    Recursively build a list of all files in a directory.
+    
+    Args:
+        source_uri: URI of directory to scan
+        rel_path: Relative path from root (for tracking)
+        file_list: List to append file paths to
+    """
+    entries = gio_utils.gio_list(source_uri)
+    
+    for entry in entries:
+        entry_uri = f"{source_uri}/{entry}" if source_uri.endswith('/') else f"{source_uri}/{entry}"
+        entry_rel_path = f"{rel_path}/{entry}" if rel_path else entry
+        
+        # Get entry info
+        info = gio_utils.gio_info(entry_uri)
+        entry_type = info.get("standard::type", "")
+        
+        is_dir = (
+            "directory" in entry_type.lower() or
+            entry_type == "2" or
+            info.get("standard::is-directory", "").lower() == "true"
+        )
+        
+        if is_dir:
+            # Recurse into directory
+            _build_file_list(entry_uri, entry_rel_path, file_list)
+        elif "regular" in entry_type.lower() or entry_type == "1":
+            # Add file to list
+            file_list.append(entry_rel_path)
 
 
 def run_move_rule(rule: Dict[str, Any], device: Dict[str, Any], verbose: bool = False) -> Dict[str, int]:

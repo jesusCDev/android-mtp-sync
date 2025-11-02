@@ -127,6 +127,27 @@ def add_copy_rule(config: Dict[str, Any], profile_name: str, phone_path: str, de
     profile["rules"].append(rule)
 
 
+def add_smart_copy_rule(config: Dict[str, Any], profile_name: str, phone_path: str, desktop_path: str, manual_only: bool = False) -> None:
+    """Add a smart copy rule to a profile (resumable copy with progress tracking)."""
+    profile = find_profile(config, profile_name)
+    if not profile:
+        raise ValueError(f"Profile '{profile_name}' not found")
+    
+    if "rules" not in profile:
+        profile["rules"] = []
+    
+    rule = {
+        "id": generate_rule_id(profile),
+        "mode": "smart_copy",
+        "phone_path": phone_path,
+        "desktop_path": desktop_path,
+        "recursive": True,
+        "manual_only": manual_only
+    }
+    
+    profile["rules"].append(rule)
+
+
 def add_sync_rule(config: Dict[str, Any], profile_name: str, desktop_path: str, phone_path: str, manual_only: bool = False) -> None:
     """Add a sync rule to a profile."""
     profile = find_profile(config, profile_name)
@@ -163,7 +184,8 @@ def remove_rule(config: Dict[str, Any], profile_name: str, rule_id: str) -> None
 def edit_rule(config: Dict[str, Any], profile_name: str, rule_id: str, 
               mode: Optional[str] = None,
               phone_path: Optional[str] = None, 
-              desktop_path: Optional[str] = None) -> None:
+              desktop_path: Optional[str] = None,
+              manual_only: Optional[bool] = None) -> None:
     """Edit an existing rule."""
     profile = find_profile(config, profile_name)
     if not profile:
@@ -177,6 +199,8 @@ def edit_rule(config: Dict[str, Any], profile_name: str, rule_id: str,
                 rule["phone_path"] = phone_path
             if desktop_path:
                 rule["desktop_path"] = desktop_path
+            if manual_only is not None:
+                rule["manual_only"] = manual_only
             return
     
     raise ValueError(f"Rule '{rule_id}' not found in profile '{profile_name}'")
@@ -287,9 +311,13 @@ def print_rules(config: Dict[str, Any], profile_name: str) -> None:
             mode_icon = "📋"
             mode_color = BRIGHT_CYAN
             mode_text = "COPY"
+        elif mode == "smart_copy":
+            mode_icon = "💡"
+            mode_color = BRIGHT_YELLOW
+            mode_text = "SMART COPY"
         elif mode == "sync":
             mode_icon = "🔄"
-            mode_color = CYAN
+            mode_color = GREEN
             mode_text = "SYNC"
         else:
             mode_icon = "❓"
@@ -303,11 +331,13 @@ def print_rules(config: Dict[str, Any], profile_name: str) -> None:
         print(f"{DIM}[{rule_id}]{RESET} {mode_icon} {BOLD}{mode_color}{mode_text}{RESET}{manual_tag}")
         
         # Paths and action
-        if mode in ["move", "copy"]:
+        if mode in ["move", "copy", "smart_copy"]:
             print(f"  {DIM}Phone:  {RESET} {CYAN}{phone_path}{RESET}")
             print(f"  {DIM}Desktop:{RESET} {GREEN}{shorten(desktop_path)}{RESET}")
             if mode == "move":
                 print(f"  {DIM}Action: {RESET} Copy to desktop, then {YELLOW}delete from phone{RESET}")
+            elif mode == "smart_copy":
+                print(f"  {DIM}Action: {RESET} {BRIGHT_CYAN}Resumable copy{RESET} to desktop {DIM}(tracks progress){RESET}")
             else:
                 print(f"  {DIM}Action: {RESET} Copy to desktop, {GREEN}keep on phone{RESET}")
         elif mode == "sync":
