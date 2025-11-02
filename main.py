@@ -133,6 +133,8 @@ Automate file transfers between Android phone (MTP) and Linux desktop.
                            help="Execute operations (default is dry-run preview)")
     exec_opts.add_argument("-v", "--verbose", action="store_true",
                            help="Show detailed output (file-by-file)")
+    exec_opts.add_argument("--notify", action="store_true",
+                           help="🔔 Send desktop notifications on completion")
     
     return p
 
@@ -235,7 +237,7 @@ def main():
         if args.run:
             # Dry-run by default, require --yes to execute
             dry_run = not args.execute
-            runner.run_for_connected_device(config, verbose=args.verbose, dry_run=dry_run, rule_ids=args.rule_id)
+            runner.run_for_connected_device(config, verbose=args.verbose, dry_run=dry_run, rule_ids=args.rule_id, notify=args.notify)
             return 0
         
         if args.browse_phone:

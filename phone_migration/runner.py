@@ -1,7 +1,7 @@
 """Runner to detect connected device and execute configured rules."""
 
 from typing import Any, Dict, Optional
-from . import device, config as cfg, operations, gio_utils
+from . import device, config as cfg, operations, gio_utils, notifications
 
 # ANSI color codes
 class Colors:
@@ -64,7 +64,7 @@ def detect_connected_device(config: Dict[str, Any], verbose: bool = False) -> Op
     return None
 
 
-def run_for_connected_device(config: Dict[str, Any], verbose: bool = False, dry_run: bool = False, rule_ids: Optional[list] = None) -> None:
+def run_for_connected_device(config: Dict[str, Any], verbose: bool = False, dry_run: bool = False, rule_ids: Optional[list] = None, notify: bool = False) -> None:
     """
     Detect connected device and run configured rules.
     
@@ -73,6 +73,7 @@ def run_for_connected_device(config: Dict[str, Any], verbose: bool = False, dry_
         verbose: Print verbose output
         dry_run: Print actions without executing
         rule_ids: Optional list of specific rule IDs to run (ignores manual_only flag)
+        notify: Send desktop notifications on completion
     """
     # Print program header
     print(f"\n{Colors.BOLD}{Colors.BRIGHT_WHITE}{'='*60}{Colors.RESET}")
@@ -96,6 +97,11 @@ def run_for_connected_device(config: Dict[str, Any], verbose: bool = False, dry_
         print(f"  {Colors.DIM}3.{Colors.RESET} Your phone is unlocked")
         print(f"  {Colors.DIM}4.{Colors.RESET} You've registered the device with: {Colors.CYAN}phone-sync --add-device{Colors.RESET}")
         print(f"\n{Colors.DIM}Run 'gio mount -li' to see connected MTP devices{Colors.RESET}")
+        
+        # Send notification if enabled
+        if notify:
+            notifications.notify_device_not_found()
+        
         return
     
     profile_name = profile.get("name", "unknown")
@@ -229,3 +235,7 @@ def run_for_connected_device(config: Dict[str, Any], verbose: bool = False, dry_
     if dry_run:
         print(f"\n{Colors.BOLD}{Colors.YELLOW}[DRY RUN]{Colors.RESET} {Colors.DIM}No actual changes were made{Colors.RESET}")
         print(f"   {Colors.DIM}Run with{Colors.RESET} {Colors.GREEN}--yes{Colors.RESET} {Colors.DIM}or{Colors.RESET} {Colors.GREEN}-y{Colors.RESET} {Colors.DIM}to execute operations{Colors.RESET}")
+    
+    # Send notification if enabled
+    if notify:
+        notifications.notify_completion(total_stats, dry_run)
