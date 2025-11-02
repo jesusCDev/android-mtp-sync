@@ -61,7 +61,7 @@ def run_copy_rule(rule: Dict[str, Any], device: Dict[str, Any], verbose: bool = 
     stats = {"copied": 0, "renamed": 0, "errors": 0, "folders": 0}
 
     # Recursively process phone directory (no deletion)
-    _process_copy_directory(source_uri, dest_dir, stats, verbose)
+    _process_copy_directory(source_uri, dest_dir, stats, verbose, transfer_tracker=transfer_tracker)
 
     # Align based on longest label "Renamed:" (8 chars including emoji/symbol)
     print(f"\n  {Colors.GREEN}✓ Copied:{Colors.RESET}   {stats['copied']} files")
@@ -76,11 +76,12 @@ def run_copy_rule(rule: Dict[str, Any], device: Dict[str, Any], verbose: bool = 
 
 
 def _process_copy_directory(source_uri: str, dest_dir: Path, 
-                            stats: Dict[str, int], verbose: bool, in_subfolder: bool = False) -> None:
+                            stats: Dict[str, int], verbose: bool, in_subfolder: bool = False, transfer_tracker=None) -> None:
     """Recursively process a directory for copy operation (no deletion).
 
     Args:
         in_subfolder: True if we're inside a subfolder (to hide individual file output)
+        transfer_tracker: Optional TransferStats instance for tracking
     """
     # List entries in source directory
     entries = gio_utils.gio_list(source_uri)
@@ -109,7 +110,7 @@ def _process_copy_directory(source_uri: str, dest_dir: Path,
 
             # Recurse into subdirectory (track file count, mark as in_subfolder)
             folder_stats_before = stats["copied"]
-            _process_copy_directory(entry_uri, sub_dest_dir, stats, verbose, in_subfolder=True)
+            _process_copy_directory(entry_uri, sub_dest_dir, stats, verbose, in_subfolder=True, transfer_tracker=transfer_tracker)
             files_in_folder = stats["copied"] - folder_stats_before
             if files_in_folder > 0 and not verbose:
                 print(f"     {Colors.DIM}({files_in_folder} files){Colors.RESET}")
@@ -127,6 +128,9 @@ def _process_copy_directory(source_uri: str, dest_dir: Path,
                     dest_short = shorten_path(dest_file)
                     print(f"  {Colors.YELLOW}↻{Colors.RESET} {Colors.DIM}{entry}{Colors.RESET} → {Colors.YELLOW}{dest_file.name}{Colors.RESET} {Colors.DIM}(duplicate → {dest_short}){Colors.RESET}")
 
+            # Get file size for transfer tracking
+            file_size = gio_utils.get_file_size(info)
+            
             # Copy file - show root level files (not in subfolder), but not if already shown via rename
             show_copy = (not will_rename and not in_subfolder) or verbose
             if gio_utils.gio_copy(entry_uri, str(dest_file), recursive=False, overwrite=False, verbose=show_copy):
@@ -134,8 +138,15 @@ def _process_copy_directory(source_uri: str, dest_dir: Path,
                 if gio_utils.DRY_RUN:
                     # In dry-run, just count it as successful
                     stats["copied"] += 1
+                    # Track transfer stats (use estimated size in dry-run)
+                    if transfer_tracker and file_size:
+                        transfer_tracker.add_file(file_size)
                 elif dest_file.exists() and dest_file.stat().st_size > 0:
                     stats["copied"] += 1
+                    # Track actual transferred bytes
+                    if transfer_tracker:
+                        actual_size = dest_file.stat().st_size
+                        transfer_tracker.add_file(actual_size)
                 else:
                     stats["errors"] += 1
                     if verbose:
@@ -243,6 +254,10 @@ def run_smart_copy_rule(rule: Dict[str, Any], device: Dict[str, Any], verbose: b
                     stats["copied"] += 1
                     # Mark as copied in state
                     state.mark_file_copied(rule_id, rel_path)
+                    # Track transfer stats
+                    if transfer_tracker and dest_file.exists():
+                        actual_size = dest_file.stat().st_size
+                        transfer_tracker.add_file(actual_size)
                 else:
                     stats["failed"] += 1
                     state.mark_file_failed(rule_id, rel_path, "Copy verification failed")
@@ -347,7 +362,7 @@ def run_move_rule(rule: Dict[str, Any], device: Dict[str, Any], verbose: bool = 
     files_to_delete = []
 
     # Recursively process phone directory
-    _process_move_directory(source_uri, dest_dir, files_to_delete, stats, verbose)
+    _process_move_directory(source_uri, dest_dir, files_to_delete, stats, verbose, transfer_tracker=transfer_tracker)
 
     # Delete files from phone after successful copy
     # Don't list individual files - just count them
@@ -380,11 +395,12 @@ def run_move_rule(rule: Dict[str, Any], device: Dict[str, Any], verbose: bool = 
 
 
 def _process_move_directory(source_uri: str, dest_dir: Path, files_to_delete: list,
-                            stats: Dict[str, int], verbose: bool, in_subfolder: bool = False) -> None:
+                            stats: Dict[str, int], verbose: bool, in_subfolder: bool = False, transfer_tracker=None) -> None:
     """Recursively process a directory for move operation.
 
     Args:
         in_subfolder: True if we're inside a subfolder (to hide individual file output)
+        transfer_tracker: Optional TransferStats instance for tracking
     """
     # List entries in source directory
     entries = gio_utils.gio_list(source_uri)
@@ -413,7 +429,7 @@ def _process_move_directory(source_uri: str, dest_dir: Path, files_to_delete: li
 
             # Recurse into subdirectory (track file count, mark as in_subfolder)
             folder_stats_before = stats["copied"]
-            _process_move_directory(entry_uri, sub_dest_dir, files_to_delete, stats, verbose, in_subfolder=True)
+            _process_move_directory(entry_uri, sub_dest_dir, files_to_delete, stats, verbose, in_subfolder=True, transfer_tracker=transfer_tracker)
             files_in_folder = stats["copied"] - folder_stats_before
             if files_in_folder > 0 and not verbose:
                 print(f"     {Colors.DIM}({files_in_folder} files){Colors.RESET}")
@@ -431,6 +447,9 @@ def _process_move_directory(source_uri: str, dest_dir: Path, files_to_delete: li
                     dest_short = shorten_path(dest_file)
                     print(f"  {Colors.YELLOW}↻{Colors.RESET} {Colors.DIM}{entry}{Colors.RESET} → {Colors.YELLOW}{dest_file.name}{Colors.RESET} {Colors.DIM}(duplicate → {dest_short}){Colors.RESET}")
 
+            # Get file size for transfer tracking
+            file_size = gio_utils.get_file_size(info)
+            
             # Copy file - show root level files (not in subfolder), but not if already shown via rename
             show_copy = (not will_rename and not in_subfolder) or verbose
             if gio_utils.gio_copy(entry_uri, str(dest_file), recursive=False, overwrite=False, verbose=show_copy):
@@ -439,9 +458,16 @@ def _process_move_directory(source_uri: str, dest_dir: Path, files_to_delete: li
                     # In dry-run, just count it as successful
                     stats["copied"] += 1
                     files_to_delete.append(entry_uri)
+                    # Track transfer stats (use estimated size in dry-run)
+                    if transfer_tracker and file_size:
+                        transfer_tracker.add_file(file_size)
                 elif dest_file.exists() and dest_file.stat().st_size > 0:
                     stats["copied"] += 1
                     files_to_delete.append(entry_uri)
+                    # Track actual transferred bytes
+                    if transfer_tracker:
+                        actual_size = dest_file.stat().st_size
+                        transfer_tracker.add_file(actual_size)
                 else:
                     stats["errors"] += 1
                     if verbose:
@@ -519,7 +545,7 @@ def run_sync_rule(rule: Dict[str, Any], device: Dict[str, Any], verbose: bool = 
     expected_phone_files: Set[str] = set()
 
     # Copy/update files from desktop to phone
-    _sync_desktop_to_phone(src_dir, dest_uri, "", expected_phone_files, stats, verbose)
+    _sync_desktop_to_phone(src_dir, dest_uri, "", expected_phone_files, stats, verbose, transfer_tracker=transfer_tracker)
 
     # Delete extraneous files on phone
     if rule.get("delete_extraneous", True):
@@ -546,7 +572,7 @@ def run_sync_rule(rule: Dict[str, Any], device: Dict[str, Any], verbose: bool = 
 
 
 def _sync_desktop_to_phone(src_dir: Path, dest_uri: str, rel_path: str,
-                           expected_files: Set[str], stats: Dict[str, int], verbose: bool) -> None:
+                           expected_files: Set[str], stats: Dict[str, int], verbose: bool, transfer_tracker=None) -> None:
     """Recursively sync desktop directory to phone (smart sync: skip unchanged files)."""
     if not src_dir.is_dir():
         return
@@ -560,7 +586,7 @@ def _sync_desktop_to_phone(src_dir: Path, dest_uri: str, rel_path: str,
             gio_utils.gio_mkdir(sub_dest_uri, parents=True)
 
             # Recurse
-            _sync_desktop_to_phone(entry, sub_dest_uri, entry_rel_path, expected_files, stats, verbose)
+            _sync_desktop_to_phone(entry, sub_dest_uri, entry_rel_path, expected_files, stats, verbose, transfer_tracker=transfer_tracker)
 
         elif entry.is_file():
             # Track this file as expected
@@ -586,6 +612,10 @@ def _sync_desktop_to_phone(src_dir: Path, dest_uri: str, rel_path: str,
             # File is new or changed - copy it
             if gio_utils.gio_copy(str(entry), dest_file_uri, recursive=False, overwrite=True, verbose=verbose):
                 stats["copied"] += 1
+                # Track transfer stats
+                if transfer_tracker:
+                    file_size = entry.stat().st_size
+                    transfer_tracker.add_file(file_size)
             else:
                 stats["errors"] += 1
 
