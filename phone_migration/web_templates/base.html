@@ -14,11 +14,11 @@
             --menu-item-hover: #21262E;
             --surface: #111318;
             --surface-hover: #161922;
-            --border-subtle: rgba(255,255,255,.06);
-            --border-strong: rgba(255,255,255,.12);
-            --text: #EAECEF;
-            --text-muted: #B6BECA;
-            --icon-idle: #8B94A6;
+            --border-subtle: rgba(255,255,255,.08);
+            --border-strong: rgba(255,255,255,.16);
+            --text: #F2F4F7;
+            --text-muted: #C7CED9;
+            --icon-idle: #A7B0C0;
             --accent: #8B5CF6;
             --info: #60A5FA;
             --success: #22C55E;
@@ -26,9 +26,15 @@
             --danger: #EF4444;
             --radius-card: 16px;
             --radius-pill: 12px;
-            --shadow-card: 0 8px 24px rgba(0,0,0,.35), 0 2px 8px rgba(0,0,0,.20);
-            --shadow-card-hover: 0 12px 28px rgba(0,0,0,.38), 0 3px 10px rgba(0,0,0,.22);
+            --shadow-card: 0 6px 24px rgba(0,0,0,.28), 0 2px 8px rgba(0,0,0,.18);
+            --shadow-card-hover: 0 10px 30px rgba(0,0,0,.32), 0 3px 10px rgba(0,0,0,.20);
             --easing: cubic-bezier(.22,.61,.36,1);
+        }
+        
+        html {
+            color-scheme: dark;
+            -webkit-font-smoothing: antialiased;
+            text-rendering: optimizeLegibility;
         }
         
         * {
@@ -42,8 +48,8 @@
             background: var(--bg-content);
             color: var(--text);
             line-height: 1.55;
-            font-size: 15px;
-            font-weight: 450;
+            font-size: 16px;
+            font-weight: 500;
         }
         
         .container {
@@ -84,7 +90,7 @@
         }
         
         nav a {
-            color: var(--text-muted);
+            color: var(--text);
             text-decoration: none;
             padding: 8px 16px;
             border-radius: var(--radius-pill);
@@ -123,18 +129,17 @@
         }
         
         .card {
-            background: var(--surface);
+            background: linear-gradient(180deg, #131721 0%, #0F1217 100%);
             border: 1px solid var(--border-subtle);
             border-radius: var(--radius-card);
             padding: 24px;
             margin-bottom: 20px;
             box-shadow: var(--shadow-card), inset 0 1px 0 rgba(255,255,255,.04);
-            background: linear-gradient(to bottom, #151922 0%, #101215 100%);
-            transition: transform 180ms var(--easing), box-shadow 180ms var(--easing), background-color 180ms var(--easing), border-color 180ms var(--easing);
+            transition: transform 170ms var(--easing), box-shadow 170ms var(--easing), background-color 170ms var(--easing), border-color 170ms var(--easing);
         }
         
-        .card:hover {
-            transform: translateY(-1px);
+        .card:hover, .card:focus-within {
+            transform: translateY(-0.5px);
             border-color: var(--border-strong);
             background: var(--surface-hover);
             box-shadow: var(--shadow-card-hover), inset 0 1px 0 rgba(255,255,255,.04);
@@ -146,6 +151,7 @@
             color: var(--text);
             font-weight: 600;
             line-height: 1.4;
+            letter-spacing: -0.1px;
         }
         
         .card h2 i {
@@ -245,7 +251,7 @@
             background: #141821;
             border: 1px solid var(--border-subtle);
             border-radius: var(--radius-pill);
-            font-size: 15px;
+            font-size: 16px;
             color: var(--text);
             transition: all 170ms var(--easing);
         }
@@ -255,7 +261,7 @@
             outline: none;
             border-color: var(--accent);
             background: #1A1E25;
-            box-shadow: 0 0 0 3px rgba(139,92,246,0.25);
+            box-shadow: 0 0 0 3px rgba(139,92,246,0.22);
         }
         
         /* Grid Layout */
@@ -289,8 +295,8 @@
         }
         
         .alert-success {
-            background: rgba(34,197,94,0.08);
-            color: #A7F3D0;
+            background: rgba(34,197,94,0.10);
+            color: #D9FBE8;
             border: 1px solid var(--success);
             border-radius: var(--radius-pill);
             font-size: 14px;
@@ -299,7 +305,7 @@
         
         .alert-danger {
             background: #2A1214;
-            color: #FDD8DB;
+            color: #FFDDE0;
             border: 1px solid var(--danger);
             border-radius: var(--radius-pill);
             font-size: 14px;
@@ -307,8 +313,8 @@
         }
         
         .alert-info {
-            background: rgba(96,165,250,0.08);
-            color: #BFDBFE;
+            background: rgba(96,165,250,0.10);
+            color: #D6E9FF;
             border: 1px solid var(--info);
             border-radius: var(--radius-pill);
             font-size: 14px;
