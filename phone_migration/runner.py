@@ -2,6 +2,7 @@
 
 from typing import Any, Dict, Optional
 from . import device, config as cfg, operations, gio_utils, notifications
+from .transfer_stats import TransferStats
 
 # ANSI color codes
 class Colors:
@@ -154,7 +155,12 @@ def run_for_connected_device(config: Dict[str, Any], verbose: bool = False, dry_
             pass  # Already mounted
     
     # Execute each rule
-    total_stats = {"copied": 0, "renamed": 0, "deleted": 0, "errors": 0, "moved": 0, "synced": 0, "backed_up": 0, "folders": 0}
+    total_stats = {"copied": 0, "renamed": 0, "deleted": 0, "errors": 0, "moved": 0, "synced": 0, "backed_up": 0, "folders": 0, "transfer_stats": None}
+    
+    # Start transfer statistics tracking
+    transfer_tracker = TransferStats()
+    transfer_tracker.start()
+    total_stats["transfer_stats"] = transfer_tracker
     
     for i, rule in enumerate(rules, 1):
         rule_id = rule.get("id", f"rule-{i}")
@@ -162,7 +168,7 @@ def run_for_connected_device(config: Dict[str, Any], verbose: bool = False, dry_
         
         try:
             if mode == "move":
-                stats = operations.run_move_rule(rule, device_info, verbose)
+                stats = operations.run_move_rule(rule, device_info, verbose, transfer_tracker)
                 total_stats["copied"] += stats.get("copied", 0)
                 total_stats["renamed"] += stats.get("renamed", 0)
                 total_stats["deleted"] += stats.get("deleted", 0)
@@ -171,7 +177,7 @@ def run_for_connected_device(config: Dict[str, Any], verbose: bool = False, dry_
                 total_stats["folders"] += stats.get("folders", 0)
             
             elif mode == "copy":
-                stats = operations.run_copy_rule(rule, device_info, verbose)
+                stats = operations.run_copy_rule(rule, device_info, verbose, transfer_tracker)
                 total_stats["copied"] += stats.get("copied", 0)
                 total_stats["renamed"] += stats.get("renamed", 0)
                 total_stats["errors"] += stats.get("errors", 0)
@@ -179,13 +185,13 @@ def run_for_connected_device(config: Dict[str, Any], verbose: bool = False, dry_
                 total_stats["folders"] += stats.get("folders", 0)
             
             elif mode == "smart_copy":
-                stats = operations.run_smart_copy_rule(rule, device_info, verbose)
+                stats = operations.run_smart_copy_rule(rule, device_info, verbose, transfer_tracker)
                 total_stats["copied"] += stats.get("copied", 0)
                 total_stats["errors"] += stats.get("errors", 0)
                 total_stats["backed_up"] += stats.get("copied", 0) + stats.get("resumed", 0)  # Total including resumed
             
             elif mode == "sync":
-                stats = operations.run_sync_rule(rule, device_info, verbose)
+                stats = operations.run_sync_rule(rule, device_info, verbose, transfer_tracker)
                 total_stats["copied"] += stats.get("copied", 0)
                 total_stats["deleted"] += stats.get("deleted", 0)
                 total_stats["errors"] += stats.get("errors", 0)
@@ -231,6 +237,14 @@ def run_for_connected_device(config: Dict[str, Any], verbose: bool = False, dry_
             print(f"\n{Colors.BRIGHT_GREEN}{Colors.BOLD}✅ All operations completed successfully!{Colors.RESET}")
         else:
             print(f"\n{Colors.GREEN}✓ No changes needed{Colors.RESET}")
+    
+    # Show transfer statistics if any files were transferred
+    if transfer_tracker and (moved_count + backed_up_count + synced_count) > 0:
+        stats_summary = transfer_tracker.get_summary()
+        if stats_summary["size_bytes"] > 0:
+            print(f"\n  {Colors.DIM}📊 Transfer: {Colors.RESET}{stats_summary['size']} in {stats_summary['time']}")
+            if stats_summary["speed_mbps"] > 0.1:  # Only show speed if meaningful
+                print(f"  {Colors.DIM}⚡ Speed: {Colors.RESET}{stats_summary['speed']}")
     
     if dry_run:
         print(f"\n{Colors.BOLD}{Colors.YELLOW}[DRY RUN]{Colors.RESET} {Colors.DIM}No actual changes were made{Colors.RESET}")

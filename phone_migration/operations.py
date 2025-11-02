@@ -31,7 +31,7 @@ def shorten_path(path_str: str) -> str:
     return path_str
 
 
-def run_copy_rule(rule: Dict[str, Any], device: Dict[str, Any], verbose: bool = False) -> Dict[str, int]:
+def run_copy_rule(rule: Dict[str, Any], device: Dict[str, Any], verbose: bool = False, transfer_tracker=None) -> Dict[str, int]:
     """
     Execute a copy rule: copy from phone to desktop without deleting from phone.
 
@@ -39,6 +39,7 @@ def run_copy_rule(rule: Dict[str, Any], device: Dict[str, Any], verbose: bool = 
         rule: Rule dictionary with phone_path, desktop_path
         device: Device dictionary with activation_uri
         verbose: Print verbose output
+        transfer_tracker: Optional TransferStats instance for tracking
 
     Returns:
         Dictionary with counts: copied, renamed, errors
@@ -143,7 +144,7 @@ def _process_copy_directory(source_uri: str, dest_dir: Path,
                 stats["errors"] += 1
 
 
-def run_smart_copy_rule(rule: Dict[str, Any], device: Dict[str, Any], verbose: bool = False) -> Dict[str, int]:
+def run_smart_copy_rule(rule: Dict[str, Any], device: Dict[str, Any], verbose: bool = False, transfer_tracker=None) -> Dict[str, int]:
     """
     Execute a smart copy rule: resumable copy with progress tracking.
     
@@ -151,6 +152,7 @@ def run_smart_copy_rule(rule: Dict[str, Any], device: Dict[str, Any], verbose: b
         rule: Rule dictionary with phone_path, desktop_path, id
         device: Device dictionary with activation_uri
         verbose: Print verbose output
+        transfer_tracker: Optional TransferStats instance for tracking
     
     Returns:
         Dictionary with counts: copied, resumed, skipped, failed, errors
@@ -312,7 +314,7 @@ def _build_file_list(source_uri: str, rel_path: str, file_list: list) -> None:
             file_list.append(entry_rel_path)
 
 
-def run_move_rule(rule: Dict[str, Any], device: Dict[str, Any], verbose: bool = False) -> Dict[str, int]:
+def run_move_rule(rule: Dict[str, Any], device: Dict[str, Any], verbose: bool = False, transfer_tracker=None) -> Dict[str, int]:
     """
     Execute a move rule: copy from phone to desktop, then delete from phone.
 
@@ -320,6 +322,7 @@ def run_move_rule(rule: Dict[str, Any], device: Dict[str, Any], verbose: bool = 
         rule: Rule dictionary with phone_path, desktop_path
         device: Device dictionary with activation_uri
         verbose: Print verbose output
+        transfer_tracker: Optional TransferStats instance for tracking
 
     Returns:
         Dictionary with counts: copied, renamed, deleted, errors
@@ -479,7 +482,7 @@ def _cleanup_empty_dirs(dir_uri: str, verbose: bool, skip_root: bool = True) -> 
             pass  # Ignore errors - directory might not be empty
 
 
-def run_sync_rule(rule: Dict[str, Any], device: Dict[str, Any], verbose: bool = False) -> Dict[str, int]:
+def run_sync_rule(rule: Dict[str, Any], device: Dict[str, Any], verbose: bool = False, transfer_tracker=None) -> Dict[str, int]:
     """
     Execute a sync rule: mirror desktop to phone (desktop is source of truth).
 
@@ -487,6 +490,7 @@ def run_sync_rule(rule: Dict[str, Any], device: Dict[str, Any], verbose: bool = 
         rule: Rule dictionary with desktop_path, phone_path
         device: Device dictionary with activation_uri
         verbose: Print verbose output
+        transfer_tracker: Optional TransferStats instance for tracking
 
     Returns:
         Dictionary with counts: copied, deleted, errors
