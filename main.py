@@ -8,44 +8,129 @@ from phone_migration import config as cfg, device, runner, browser
 
 def build_parser():
     """Build the argument parser with all commands."""
+    
+    # ANSI colors for help text
+    RESET = '\033[0m'
+    BOLD = '\033[1m'
+    DIM = '\033[2m'
+    CYAN = '\033[36m'
+    BRIGHT_CYAN = '\033[96m'
+    BRIGHT_WHITE = '\033[97;1m'
+    
+    description = f"""
+{BOLD}{BRIGHT_WHITE}Phone Migration Tool{RESET}
+{DIM}{'─' * 70}{RESET}
+
+Automate file transfers between Android phone (MTP) and Linux desktop.
+
+{BOLD}Common Workflows:{RESET}
+  {CYAN}1. First time setup:{RESET}
+     phone-sync --add-device --name default
+     phone-sync --move -p default -pp /DCIM/Camera -dp ~/Pictures
+     
+  {CYAN}2. Daily sync:{RESET}
+     phone-sync --run -y
+     
+  {CYAN}3. Manual backup:{RESET}
+     phone-sync --copy -p default -pp /DCIM/Camera -dp ~/Backup --manual
+     phone-sync --run -r r-0003 -y
+
+{DIM}Default behavior: Dry-run mode (preview only). Use -y to execute.{RESET}
+    """
+    
     p = argparse.ArgumentParser(
-        prog="phone-migration",
-        description="Automate file transfers between Android phone (MTP) and Linux desktop"
+        prog="phone-sync",
+        description=description,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=f"""
+{BOLD}Examples:{RESET}
+  {DIM}# Register your phone{RESET}
+  phone-sync --add-device
+  
+  {DIM}# Move screenshots daily{RESET}
+  phone-sync --move -p default -pp /DCIM/Screenshots -dp ~/Pictures/Screenshots
+  
+  {DIM}# Backup camera folder monthly (manual){RESET}
+  phone-sync --copy -p default -pp /DCIM/Camera -dp ~/Backup --manual
+  
+  {DIM}# List all rules{RESET}
+  phone-sync --list-rules -p default
+  
+  {DIM}# Run auto rules (preview){RESET}
+  phone-sync --run
+  
+  {DIM}# Run auto rules (execute){RESET}
+  phone-sync --run -y
+  
+  {DIM}# Run specific manual rule{RESET}
+  phone-sync --run -r r-0003 -y
+
+{DIM}For more information, see README.md{RESET}
+        """
     )
     
-    # Mutually exclusive commands
-    g = p.add_mutually_exclusive_group(required=True)
+    # Command groups for better organization
+    commands = p.add_argument_group('COMMANDS (choose one)')
+    g = commands.add_mutually_exclusive_group(required=True)
+    
+    # Device setup
     g.add_argument("--add-device", action="store_true", 
                    help="Register a connected MTP device")
-    g.add_argument("--move", action="store_true",
-                   help="Add a move rule (phone → desktop, delete from phone)")
-    g.add_argument("--sync", action="store_true",
-                   help="Add a sync rule (desktop → phone, desktop is source of truth)")
-    g.add_argument("--run", action="store_true",
-                   help="Execute sync/move operations for connected device")
-    g.add_argument("--list-profiles", action="store_true",
-                   help="List all configured profiles")
-    g.add_argument("--list-rules", action="store_true",
-                   help="List rules for a profile")
-    g.add_argument("--remove-rule", action="store_true",
-                   help="Remove a specific rule from a profile")
-    g.add_argument("--edit-rule", action="store_true",
-                   help="Edit an existing rule")
-    g.add_argument("--browse-phone", action="store_true",
-                   help="Browse phone directories to find paths")
     g.add_argument("--check", action="store_true",
                    help="Check if phone is connected and recognized")
     
-    # Optional arguments
-    p.add_argument("-n", "--name", help="Profile name (for --add-device, default: 'default')")
-    p.add_argument("-p", "--profile", help="Profile name to operate on")
-    p.add_argument("-pp", "--phone-path", help="Path on phone (e.g., /DCIM/Camera)")
-    p.add_argument("-dp", "--desktop-path", help="Path on desktop (e.g., ~/Videos/phone_images/Camera)")
-    p.add_argument("-i", "--id", help="Rule ID (for --remove-rule, --edit-rule)")
-    p.add_argument("-m", "--mode", choices=["move", "sync"], help="Rule mode (for --edit-rule)")
-    p.add_argument("-v", "--verbose", action="store_true", help="Verbose output")
-    p.add_argument("-y", "--yes", "--execute", action="store_true", dest="execute",
-                   help="Execute operations (default is dry-run)")
+    # Rule management
+    g.add_argument("--move", action="store_true",
+                   help="📤 Add move rule (phone → desktop, delete from phone)")
+    g.add_argument("--copy", action="store_true",
+                   help="📋 Add copy rule (phone → desktop, keep on phone)")
+    g.add_argument("--sync", action="store_true",
+                   help="🔄 Add sync rule (desktop → phone, mirror)")
+    g.add_argument("--remove-rule", action="store_true",
+                   help="Remove a rule from a profile")
+    g.add_argument("--edit-rule", action="store_true",
+                   help="Edit an existing rule")
+    
+    # Information
+    g.add_argument("--list-profiles", action="store_true",
+                   help="List all configured profiles")
+    g.add_argument("--list-rules", action="store_true",
+                   help="List rules for a profile (with colors)")
+    g.add_argument("--browse-phone", action="store_true",
+                   help="Browse phone directories interactively")
+    
+    # Execution
+    g.add_argument("--run", action="store_true",
+                   help="▶️  Execute configured rules (dry-run by default)")
+    
+    # Device options
+    device_opts = p.add_argument_group('Device options (for --add-device)')
+    device_opts.add_argument("-n", "--name", metavar="NAME",
+                             help="Profile name (default: 'default')")
+    
+    # Rule options
+    rule_opts = p.add_argument_group('Rule options (for --move, --copy, --sync, --remove-rule, --edit-rule, --list-rules)')
+    rule_opts.add_argument("-p", "--profile", metavar="PROFILE",
+                           help="Profile name to operate on (required)")
+    rule_opts.add_argument("-pp", "--phone-path", metavar="PATH",
+                           help="Path on phone (e.g., /DCIM/Camera)")
+    rule_opts.add_argument("-dp", "--desktop-path", metavar="PATH",
+                           help="Path on desktop (e.g., ~/Pictures)")
+    rule_opts.add_argument("-i", "--id", metavar="ID",
+                           help="Rule ID (for --remove-rule, --edit-rule)")
+    rule_opts.add_argument("-m", "--mode", choices=["move", "copy", "sync"],
+                           help="Rule mode (for --edit-rule)")
+    rule_opts.add_argument("--manual", action="store_true",
+                           help="Mark rule as manual-only (for --move, --copy, --sync)")
+    
+    # Execution options
+    exec_opts = p.add_argument_group('Execution options (for --run)')
+    exec_opts.add_argument("-r", "--rule-id", action="append", metavar="ID",
+                           help="Run specific rule(s) by ID (can use multiple times)")
+    exec_opts.add_argument("-y", "--yes", "--execute", action="store_true", dest="execute",
+                           help="Execute operations (default is dry-run preview)")
+    exec_opts.add_argument("-v", "--verbose", action="store_true",
+                           help="Show detailed output (file-by-file)")
     
     return p
 
@@ -79,9 +164,21 @@ def main():
                 print("Error: --profile, --phone-path, and --desktop-path are required for --move", 
                       file=sys.stderr)
                 return 1
-            cfg.add_move_rule(config, args.profile, args.phone_path, args.desktop_path)
+            cfg.add_move_rule(config, args.profile, args.phone_path, args.desktop_path, manual_only=args.manual)
             cfg.save_config(config)
-            print(f"✓ Move rule added to profile '{args.profile}'")
+            manual_suffix = " [MANUAL]" if args.manual else ""
+            print(f"✓ Move rule added to profile '{args.profile}'{manual_suffix}")
+            return 0
+        
+        if args.copy:
+            if not all([args.profile, args.phone_path, args.desktop_path]):
+                print("Error: --profile, --phone-path, and --desktop-path are required for --copy", 
+                      file=sys.stderr)
+                return 1
+            cfg.add_copy_rule(config, args.profile, args.phone_path, args.desktop_path, manual_only=args.manual)
+            cfg.save_config(config)
+            manual_suffix = " [MANUAL]" if args.manual else ""
+            print(f"✓ Copy rule added to profile '{args.profile}'{manual_suffix}")
             return 0
         
         if args.sync:
@@ -89,9 +186,10 @@ def main():
                 print("Error: --profile, --phone-path, and --desktop-path are required for --sync",
                       file=sys.stderr)
                 return 1
-            cfg.add_sync_rule(config, args.profile, args.desktop_path, args.phone_path)
+            cfg.add_sync_rule(config, args.profile, args.desktop_path, args.phone_path, manual_only=args.manual)
             cfg.save_config(config)
-            print(f"✓ Sync rule added to profile '{args.profile}'")
+            manual_suffix = " [MANUAL]" if args.manual else ""
+            print(f"✓ Sync rule added to profile '{args.profile}'{manual_suffix}")
             return 0
         
         if args.remove_rule:
@@ -118,7 +216,7 @@ def main():
         if args.run:
             # Dry-run by default, require --yes to execute
             dry_run = not args.execute
-            runner.run_for_connected_device(config, verbose=args.verbose, dry_run=dry_run)
+            runner.run_for_connected_device(config, verbose=args.verbose, dry_run=dry_run, rule_ids=args.rule_id)
             return 0
         
         if args.browse_phone:

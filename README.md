@@ -7,6 +7,7 @@ Automate file transfers between your Android phone and Linux desktop via MTP (Me
 - **Device Profiles**: Register your phone with a unique identifier to ensure operations run on the correct device
 - **Move Operation**: Copy files from phone to desktop, then delete them from phone (great for photos/videos)
 - **Sync Operation**: Mirror desktop folders to phone with desktop as source of truth (perfect for playlists, documents)
+- **Smart Sync**: Intelligently skips unchanged files by comparing file sizes (rsync-like behavior) - saves time and bandwidth
 - **Conflict Handling**: Automatically rename duplicates with (1), (2), etc. suffixes
 - **Dry Run Mode**: Preview operations before executing
 - **Path Flexibility**: Support for both `/DCIM/Camera` and `Internal storage/DCIM/Camera` path formats
@@ -219,8 +220,9 @@ Configuration is stored in JSON at: `~/Programming/project-cli/phone-migration/c
 **Sync Rule:**
 - `desktop_path`: Source on desktop (source of truth)
 - `phone_path`: Destination on phone
-- Behavior: Mirror desktop to phone, overwrite conflicts, delete extraneous files
-- Desktop files always take precedence
+- Behavior: Smart sync desktop to phone - only copies new/changed files (by size), deletes extraneous phone files
+- Desktop files always take precedence, desktop files are never deleted
+- Unchanged files are automatically skipped for faster syncs
 
 ## Phone Path Formats
 

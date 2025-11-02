@@ -38,14 +38,23 @@ Future enhancements and features to implement after core functionality is comple
   - Use `tqdm` library or custom progress display
 - **Benefit**: Better UX for large transfers (hundreds of photos)
 
-### Smart Sync with Checksums
+### Smart Sync with File Size (COMPLETED ✓)
+- **Status**: IMPLEMENTED - comparing file sizes to skip unchanged files
 - **Goal**: Only copy files that actually changed
+- **Current Implementation**:
+  - Compare file sizes between desktop and phone before copying
+  - Skip files with matching sizes (same behavior as rsync)
+  - Much faster for repeated syncs - no unnecessary transfers
+  - Stats show copied vs skipped files
+
+### Smart Sync with Checksums (Future Enhancement)
+- **Goal**: Even more precise change detection using file hashes
 - **Implementation**:
   - Calculate MD5/SHA256 hash of files before copying
-  - Skip files with matching hashes
+  - Skip files with matching hashes (catches renames, handles size collisions)
   - Store hash cache in config or separate file
-  - Much faster for large files that haven't changed
-- **Trade-off**: Hash calculation takes time vs. always copying
+- **Trade-off**: Hash calculation takes time vs. simple size comparison
+- **Note**: Size comparison (current) is sufficient for most use cases
 
 ### Hash-based Duplicate Detection for Move
 - **Goal**: Detect and skip files that already exist on desktop (even with different names)

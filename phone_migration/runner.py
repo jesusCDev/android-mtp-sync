@@ -64,14 +64,15 @@ def detect_connected_device(config: Dict[str, Any], verbose: bool = False) -> Op
     return None
 
 
-def run_for_connected_device(config: Dict[str, Any], verbose: bool = False, dry_run: bool = False) -> None:
+def run_for_connected_device(config: Dict[str, Any], verbose: bool = False, dry_run: bool = False, rule_ids: Optional[list] = None) -> None:
     """
-    Detect connected device and run all configured rules.
+    Detect connected device and run configured rules.
     
     Args:
         config: Configuration dictionary
         verbose: Print verbose output
         dry_run: Print actions without executing
+        rule_ids: Optional list of specific rule IDs to run (ignores manual_only flag)
     """
     # Set dry-run mode
     if dry_run:
@@ -101,16 +102,37 @@ def run_for_connected_device(config: Dict[str, Any], verbose: bool = False, dry_
     print(f"{Colors.BRIGHT_GREEN}✓ Found registered device:{Colors.RESET} {Colors.BOLD}{display_name}{Colors.RESET} {Colors.DIM}(profile: {profile_name}){Colors.RESET}\n")
     
     # Get rules
-    rules = profile.get("rules", [])
+    all_rules = profile.get("rules", [])
     
-    if not rules:
+    if not all_rules:
         print(f"{Colors.YELLOW}No rules configured for profile '{profile_name}'{Colors.RESET}")
         print(f"\n{Colors.BOLD}Add rules with:{Colors.RESET}")
         print(f"  {Colors.CYAN}phone-sync --move -p {profile_name} -pp /DCIM/Camera -dp ~/Pictures{Colors.RESET}")
+        print(f"  {Colors.CYAN}phone-sync --copy -p {profile_name} -pp /DCIM/Camera -dp ~/Backup{Colors.RESET}")
         print(f"  {Colors.CYAN}phone-sync --sync -p {profile_name} -dp ~/Videos/motiv -pp /Videos/motiv{Colors.RESET}")
         return
     
-    print(f"{Colors.BOLD}Executing {len(rules)} rule(s)...{Colors.RESET}\n")
+    # Filter rules based on rule_ids or manual_only flag
+    if rule_ids:
+        # Run specific rules by ID (ignore manual_only)
+        rules = [r for r in all_rules if r.get("id") in rule_ids]
+        if not rules:
+            print(f"{Colors.RED}Error: No rules found with specified IDs: {', '.join(rule_ids)}{Colors.RESET}")
+            return
+        print(f"{Colors.BOLD}Executing {len(rules)} specified rule(s)...{Colors.RESET}\n")
+    else:
+        # Run only non-manual rules
+        rules = [r for r in all_rules if not r.get("manual_only", False)]
+        manual_count = len(all_rules) - len(rules)
+        if not rules:
+            print(f"{Colors.YELLOW}All {len(all_rules)} rule(s) are marked as [MANUAL]{Colors.RESET}")
+            print(f"\n{Colors.DIM}Run specific rules with:{Colors.RESET} {Colors.CYAN}--run -r <rule-id>{Colors.RESET}")
+            return
+        print(f"{Colors.BOLD}Executing {len(rules)} rule(s)...", end="")
+        if manual_count > 0:
+            print(f" {Colors.DIM}({manual_count} manual rule(s) skipped){Colors.RESET}")
+        else:
+            print(f"{Colors.RESET}\n")
     print(f"{Colors.DIM}{'='*60}{Colors.RESET}")
     
     # Ensure device is mounted
@@ -123,7 +145,7 @@ def run_for_connected_device(config: Dict[str, Any], verbose: bool = False, dry_
             pass  # Already mounted
     
     # Execute each rule
-    total_stats = {"copied": 0, "renamed": 0, "deleted": 0, "errors": 0, "moved": 0, "synced": 0, "folders": 0}
+    total_stats = {"copied": 0, "renamed": 0, "deleted": 0, "errors": 0, "moved": 0, "synced": 0, "backed_up": 0, "folders": 0}
     
     for i, rule in enumerate(rules, 1):
         rule_id = rule.get("id", f"rule-{i}")
@@ -137,6 +159,14 @@ def run_for_connected_device(config: Dict[str, Any], verbose: bool = False, dry_
                 total_stats["deleted"] += stats.get("deleted", 0)
                 total_stats["errors"] += stats.get("errors", 0)
                 total_stats["moved"] += stats.get("copied", 0)  # Moved = files copied from phone
+                total_stats["folders"] += stats.get("folders", 0)
+            
+            elif mode == "copy":
+                stats = operations.run_copy_rule(rule, device_info, verbose)
+                total_stats["copied"] += stats.get("copied", 0)
+                total_stats["renamed"] += stats.get("renamed", 0)
+                total_stats["errors"] += stats.get("errors", 0)
+                total_stats["backed_up"] += stats.get("copied", 0)  # Backed up = files copied without deletion
                 total_stats["folders"] += stats.get("folders", 0)
             
             elif mode == "sync":
@@ -160,12 +190,15 @@ def run_for_connected_device(config: Dict[str, Any], verbose: bool = False, dry_
     print(f"\n{Colors.DIM}{'='*60}{Colors.RESET}")
     print(f"\n📊 {Colors.BOLD}Summary:{Colors.RESET}")
     
-    # Calculate moved vs synced
+    # Calculate moved vs synced vs backed_up
     moved_count = total_stats.get('moved', 0)  # Files moved (copied then deleted)
+    backed_up_count = total_stats.get('backed_up', 0)  # Files copied (kept on phone)
     synced_count = total_stats.get('synced', 0)  # Files synced to phone
     
     if moved_count > 0:
         print(f"  {Colors.BRIGHT_GREEN}📤 Files moved from phone:{Colors.RESET}      {Colors.BOLD}{moved_count}{Colors.RESET}")
+    if backed_up_count > 0:
+        print(f"  {Colors.BRIGHT_CYAN}📋 Files backed up from phone:{Colors.RESET}  {Colors.BOLD}{backed_up_count}{Colors.RESET}")
     if total_stats.get("folders", 0) > 0:
         print(f"  {Colors.BRIGHT_WHITE}📂 Folders processed:{Colors.RESET}           {Colors.BOLD}{total_stats['folders']}{Colors.RESET}")
     if synced_count > 0:
@@ -179,7 +212,7 @@ def run_for_connected_device(config: Dict[str, Any], verbose: bool = False, dry_
         print(f"  {Colors.RED}⚠️  Errors:{Colors.RESET} {Colors.BOLD}{total_stats['errors']}{Colors.RESET}")
         print(f"\n{Colors.RED}{Colors.BOLD}❌ Completed with errors{Colors.RESET}")
     else:
-        if moved_count + synced_count + total_stats['deleted'] > 0:
+        if moved_count + backed_up_count + synced_count + total_stats['deleted'] > 0:
             print(f"\n{Colors.BRIGHT_GREEN}{Colors.BOLD}✅ All operations completed successfully!{Colors.RESET}")
         else:
             print(f"\n{Colors.GREEN}✓ No changes needed{Colors.RESET}")

@@ -69,8 +69,24 @@ def gio_info(location: str, attributes: Optional[List[str]] = None) -> Dict[str,
         attributes: List of attributes to query (default: all)
     
     Returns:
-        Dictionary of attribute:value pairs
+        Dictionary of attribute:value pairs (empty dict if location doesn't exist)
     """
+    # Optimization: for local paths, use os.stat directly
+    if not location.startswith(('mtp://', 'file://', 'smb://', 'ftp://')):
+        # Local file path
+        try:
+            if os.path.exists(location):
+                stat_info = os.stat(location)
+                return {
+                    "standard::size": str(stat_info.st_size),
+                    "standard::type": "regular" if os.path.isfile(location) else "directory"
+                }
+            else:
+                return {}  # File doesn't exist
+        except Exception:
+            # Fall back to gio if there's any issue
+            pass
+    
     args = ["/usr/bin/gio", "info"]
     
     if attributes:
@@ -80,7 +96,7 @@ def gio_info(location: str, attributes: Optional[List[str]] = None) -> Dict[str,
     
     result = run(args, check=False)
     if result.returncode != 0:
-        return {}
+        return {}  # File doesn't exist or error occurred
     
     # Parse output: lines in format "attribute: value"
     info = {}
@@ -91,6 +107,26 @@ def gio_info(location: str, attributes: Optional[List[str]] = None) -> Dict[str,
             info[key.strip()] = value.strip()
     
     return info
+
+
+def get_file_size(info: Dict[str, str]) -> Optional[int]:
+    """
+    Safely extract file size from gio_info result.
+    
+    Args:
+        info: Dictionary returned by gio_info
+    
+    Returns:
+        File size in bytes, or None if size is unavailable/invalid
+    """
+    size_value = info.get("standard::size")
+    if size_value in (None, "", "Unknown"):
+        return None
+    
+    try:
+        return int(size_value)
+    except (ValueError, TypeError):
+        return None
 
 
 def gio_list(location: str) -> List[str]:

@@ -92,8 +92,9 @@ You can create Warp workflows and assign keyboard shortcuts:
 
 ## Tips
 
+- **Smart Sync**: The sync operation now intelligently skips files that haven't changed by comparing file sizes (similar to rsync). This avoids unnecessary transfers and speeds up syncs.
+- Use `--dry-run` first to preview operations and see which files will be copied vs skipped
 - Keep phone unlocked during transfer for best results
-- Use dry-run first to preview large operations
 - Check `config.json` if rules don't match expectations
 - Run `gio mount -li` to debug device detection issues
 
@@ -124,6 +125,10 @@ Move: /DCIM/Camera → /home/jesuscdev/Videos/phone_images/Camera
 Sync: /home/jesuscdev/Videos/motiv → /Videos/motiv
   Copying: /home/jesuscdev/Videos/motiv/workout1.mp4 → mtp://[usb:003,009]/Internal storage/Videos/motiv/workout1.mp4
   ✓ Synced: 1, Cleaned: 0
+
+# Second run (files unchanged):
+Sync: /home/jesuscdev/Videos/motiv → /Videos/motiv
+  ⊙ Skipped: 1, Cleaned: 0
 
 ============================================================
 
