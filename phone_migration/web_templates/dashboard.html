@@ -1,0 +1,138 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard - Phone Migration Tool{% endblock %}
+
+{% block content %}
+<div class="grid">
+    <div class="card">
+        <h2>📱 Device Status</h2>
+        <div id="device-status">
+            <div class="spinner"></div>
+        </div>
+    </div>
+    
+    <div class="card">
+        <h2>⚡ Quick Actions</h2>
+        <div style="display: flex; flex-direction: column; gap: 10px;">
+            <button class="btn btn-success" onclick="runSync()">▶️ Run All Rules</button>
+            <button class="btn" onclick="runSyncWithNotify()">🔔 Run with Notifications</button>
+            <a href="/rules" class="btn btn-secondary">✏️ Manage Rules</a>
+            <button class="btn btn-secondary" onclick="refreshStatus()">🔄 Refresh Status</button>
+        </div>
+    </div>
+</div>
+
+<div class="card">
+    <h2>📊 Recent Activity</h2>
+    <div id="activity-log">
+        <p style="color: #999;">No recent activity</p>
+    </div>
+</div>
+
+<div id="alert-container"></div>
+
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+    let deviceStatus = null;
+    
+    async function loadDeviceStatus() {
+        try {
+            const status = await apiGet('/api/status');
+            deviceStatus = status;
+            
+            const statusHtml = status.connected
+                ? `
+                    <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px;">
+                        <span class="status-badge connected">✓ Connected</span>
+                    </div>
+                    <div style="color: #666;">
+                        <p><strong>Device:</strong> ${status.device_name}</p>
+                        <p><strong>Profile:</strong> ${status.profile_name}</p>
+                        <p><strong>Rules:</strong> ${status.rule_count} configured</p>
+                    </div>
+                `
+                : `
+                    <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px;">
+                        <span class="status-badge disconnected">✗ Disconnected</span>
+                    </div>
+                    <div style="color: #666;">
+                        <p>No phone connected or device not registered</p>
+                        <p style="margin-top: 10px; font-size: 14px;">
+                            Connect your phone via USB and enable File Transfer mode
+                        </p>
+                    </div>
+                `;
+            
+            document.getElementById('device-status').innerHTML = statusHtml;
+        } catch (error) {
+            document.getElementById('device-status').innerHTML = `
+                <div class="alert alert-danger">
+                    Error loading device status: ${error.message}
+                </div>
+            `;
+        }
+    }
+    
+    function showAlert(message, type = 'success') {
+        const alertDiv = document.createElement('div');
+        alertDiv.className = `alert alert-${type}`;
+        alertDiv.textContent = message;
+        
+        const container = document.getElementById('alert-container');
+        container.appendChild(alertDiv);
+        
+        setTimeout(() => alertDiv.remove(), 5000);
+    }
+    
+    async function runSync() {
+        if (!deviceStatus || !deviceStatus.connected) {
+            showAlert('Please connect your phone first', 'danger');
+            return;
+        }
+        
+        try {
+            const result = await apiPost('/api/run', {notify: false});
+            if (result.success) {
+                showAlert('Sync started! Check the Run page for progress');
+                setTimeout(() => window.location.href = '/run', 1000);
+            } else {
+                showAlert(result.error || 'Failed to start sync', 'danger');
+            }
+        } catch (error) {
+            showAlert(`Error: ${error.message}`, 'danger');
+        }
+    }
+    
+    async function runSyncWithNotify() {
+        if (!deviceStatus || !deviceStatus.connected) {
+            showAlert('Please connect your phone first', 'danger');
+            return;
+        }
+        
+        try {
+            const result = await apiPost('/api/run', {notify: true});
+            if (result.success) {
+                showAlert('Sync started with notifications enabled!');
+                setTimeout(() => window.location.href = '/run', 1000);
+            } else {
+                showAlert(result.error || 'Failed to start sync', 'danger');
+            }
+        } catch (error) {
+            showAlert(`Error: ${error.message}`, 'danger');
+        }
+    }
+    
+    function refreshStatus() {
+        document.getElementById('device-status').innerHTML = '<div class="spinner"></div>';
+        loadDeviceStatus();
+    }
+    
+    // Load on page load
+    loadDeviceStatus();
+    
+    // Auto-refresh every 5 seconds
+    setInterval(loadDeviceStatus, 5000);
+</script>
+{% endblock %}

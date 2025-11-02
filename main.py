@@ -105,6 +105,10 @@ Automate file transfers between Android phone (MTP) and Linux desktop.
     g.add_argument("--run", action="store_true",
                    help="▶️  Execute configured rules (dry-run by default)")
     
+    # Web UI
+    g.add_argument("--web", action="store_true",
+                   help="🌐 Start web UI server (http://localhost:8080)")
+    
     # Device options
     device_opts = p.add_argument_group('Device options (for --add-device)')
     device_opts.add_argument("-n", "--name", metavar="NAME",
@@ -142,6 +146,12 @@ Automate file transfers between Android phone (MTP) and Linux desktop.
 def main():
     """Main entry point."""
     args = build_parser().parse_args()
+    
+    # Handle web UI separately (doesn't need config loading)
+    if args.web:
+        from phone_migration import web_ui
+        web_ui.start_web_ui(host='127.0.0.1', port=8080, debug=False)
+        return 0
     
     try:
         config = cfg.load_config()
