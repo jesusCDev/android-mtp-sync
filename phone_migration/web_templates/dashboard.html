@@ -1,10 +1,13 @@
 {% extends "base.html" %}
 {% block title %}Dashboard - Phone Migration Tool{% endblock %}
 
+{% block extra_styles %}
 <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard.css') }}">
-    {% block extra_styles %}{% endblock %}
+{% endblock %}
 
+{% block extra_scripts %}
 <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
+{% endblock %}
 
 {% block content %}
 <div class="card">
@@ -40,6 +43,17 @@
                 <div>
                     <div style="font-weight: 600; color: var(--text); font-size: 14px;">Notifications</div>
                     <div style="font-size: 12px; color: var(--text-muted);">Get desktop alerts</div>
+                </div>
+            </div>
+            <div class="toggle-switch"></div>
+        </div>
+        
+        <div class="option-card selected" onclick="toggleOption('rename_duplicates')" id="rename-duplicates-option">
+            <div style="display: flex; align-items: center; gap: 12px;">
+                <i class="fas fa-copy" style="color: var(--success); font-size: 20px;"></i>
+                <div>
+                    <div style="font-weight: 600; color: var(--text); font-size: 14px;">Rename on Conflict</div>
+                    <div style="font-size: 12px; color: var(--text-muted);">Rename duplicates instead of skipping</div>
                 </div>
             </div>
             <div class="toggle-switch"></div>
@@ -81,20 +95,29 @@
     <h2><i class="fas fa-chart-bar"></i> Statistics</h2>
     <div class="stats-grid">
         <div class="stat-box">
-            <div class="stat-value" id="stat-moved">0</div>
-            <div class="stat-label">Files Moved</div>
+            <div class="stat-value" id="stat-copied">0</div>
+            <div class="stat-label">Files Copied</div>
         </div>
         <div class="stat-box">
-            <div class="stat-value" id="stat-backed-up">0</div>
-            <div class="stat-label">Files Backed Up</div>
+            <div class="stat-value" id="stat-skipped">0</div>
+            <div class="stat-label">Files Skipped</div>
         </div>
         <div class="stat-box">
-            <div class="stat-value" id="stat-synced">0</div>
-            <div class="stat-label">Files Synced</div>
+            <div class="stat-value" id="stat-deleted">0</div>
+            <div class="stat-label">Files Deleted</div>
         </div>
         <div class="stat-box">
             <div class="stat-value" id="stat-errors">0</div>
             <div class="stat-label">Errors</div>
+        </div>
+    </div>
+    <div id="smart-copy-progress" style="display: none; margin-top: 20px; padding: 16px; background: rgba(96,165,250,0.1); border: 1px solid rgba(96,165,250,0.3); border-radius: var(--radius-card);">
+        <div style="margin-bottom: 12px; font-size: 14px; color: var(--text);">
+            <strong id="smart-copy-status">Smart Copy Progress</strong>
+        </div>
+        <div style="font-size: 13px; color: var(--text-muted); margin-bottom: 8px;" id="smart-copy-current"></div>
+        <div style="width: 100%; height: 6px; background: rgba(0,0,0,0.3); border-radius: 3px; overflow: hidden;">
+            <div id="smart-copy-bar" style="height: 100%; background: linear-gradient(90deg, var(--info), var(--success)); width: 0%; transition: width 300ms ease;"></div>
         </div>
     </div>
 </div>
@@ -106,5 +129,3 @@
 
 <div id="alert-container"></div>
 {% endblock %}
-
-{% block extra_scripts %}{% endblock %}

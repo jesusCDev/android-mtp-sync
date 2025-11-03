@@ -1,11 +1,36 @@
 let options = {
         dry_run: true,  // Default to dry run for safety
-        notify: true    // Default to notifications enabled
+        notify: true,   // Default to notifications enabled
+        rename_duplicates: true  // Default to renaming duplicates
     };
     let pollInterval = null;
     let isRunning = false;
     let manualRules = [];
     let selectedRuleIds = [];
+    let deviceConnected = false;
+    
+    async function checkDeviceStatus() {
+        try {
+            const status = await apiGet('/api/status');
+            deviceConnected = status.connected;
+            
+            // Update button state
+            const runBtn = document.getElementById('run-btn');
+            const manualBtn = document.getElementById('manual-btn');
+            if (runBtn) runBtn.disabled = !deviceConnected;
+            if (manualBtn) manualBtn.disabled = !deviceConnected;
+            
+            // Update status message
+            if (!deviceConnected) {
+                updateStatus('error', 'No device connected - connect phone first');
+            } else {
+                updateStatus('success', 'Device connected - ready to run');
+            }
+        } catch (error) {
+            console.error('Failed to check device status:', error);
+            updateStatus('error', 'Failed to check device status');
+        }
+    }
     
     function toggleOption(option) {
         if (isRunning) return;
@@ -21,6 +46,10 @@ let options = {
     }
     
     async function startRun(manualOnly = false) {
+        if (!deviceConnected) {
+            updateStatus('error', 'No device connected - connect phone first');
+            return;
+        }
         if (isRunning) return;
         
         isRunning = true;
@@ -47,7 +76,8 @@ let options = {
             const result = await apiPost('/api/run', {
                 dry_run: options.dry_run,
                 include_manual: manualOnly,
-                notify: options.notify
+                notify: options.notify,
+                rename_duplicates: options.rename_duplicates
             });
             
             if (result.success) {
@@ -86,9 +116,16 @@ let options = {
                 // Check if finished
                 if (!status.running && isRunning) {
                     stopPolling();
-                    const hasErrors = status.stats && status.stats.errors > 0;
-                    if (hasErrors) {
+                    const stats = status.stats || {};
+                    const hasErrors = stats.errors > 0;
+                    const hasSkipped = stats.skipped > 0;
+                    
+                    if (hasErrors && hasSkipped) {
+                        updateStatus('warning', `Completed with ${stats.skipped} skipped items (conflicts)`);
+                    } else if (hasErrors && !hasSkipped) {
                         updateStatus('error', 'Completed with errors');
+                    } else if (hasSkipped) {
+                        updateStatus('warning', `Completed with ${stats.skipped} skipped items`);
                     } else {
                         updateStatus('success', 'Completed successfully!');
                     }
@@ -123,6 +160,10 @@ let options = {
             icon.className = 'fas fa-check-circle';
             icon.style.color = 'var(--success)';
             statusText.style.color = 'var(--success)';
+        } else if (type === 'warning') {
+            icon.className = 'fas fa-exclamation-circle';
+            icon.style.color = 'var(--warning)';
+            statusText.style.color = 'var(--warning)';
         } else if (type === 'error') {
             icon.className = 'fas fa-times-circle';
             icon.style.color = 'var(--danger)';
@@ -408,6 +449,11 @@ let options = {
         // Simple alert for now
         alert(message);
     }
+    
+    // Initialize page
+    document.addEventListener('DOMContentLoaded', () => {
+        checkDeviceStatus();
+    });
     
     // Keyboard shortcuts
     document.addEventListener('keydown', (e) => {

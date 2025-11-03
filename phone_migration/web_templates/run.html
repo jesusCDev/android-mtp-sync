@@ -1,10 +1,13 @@
 {% extends "base.html" %}
 {% block title %}Run - Phone Migration Tool{% endblock %}
 
+{% block extra_styles %}
 <link rel="stylesheet" href="{{ url_for('static', filename='css/run.css') }}">
-    {% block extra_styles %}
+{% endblock %}
 
-<script src="{{ url_for(\'static\', filename=\'js/run.js\') }}"></script>{% endblock %}
+{% block extra_scripts %}
+<script src="{{ url_for('static', filename='js/run.js') }}"></script>
+{% endblock %}
 
 {% block content %}
 <div class="card">
@@ -34,6 +37,17 @@
                     <div>
                         <div style="font-weight: 600; color: var(--text); font-size: 14px;">Notifications</div>
                         <div style="font-size: 12px; color: var(--text-muted);">Get desktop alerts</div>
+                    </div>
+                </div>
+                <div class="toggle-switch"></div>
+            </div>
+            
+            <div class="option-card selected" onclick="toggleOption('rename_duplicates')" id="rename-duplicates-option">
+                <div style="display: flex; align-items: center; gap: 12px;">
+                    <i class="fas fa-copy" style="color: var(--success); font-size: 20px;"></i>
+                    <div>
+                        <div style="font-weight: 600; color: var(--text); font-size: 14px;">Rename on Conflict</div>
+                        <div style="font-size: 12px; color: var(--text-muted);">Rename duplicates instead of skipping</div>
                     </div>
                 </div>
                 <div class="toggle-switch"></div>
@@ -99,5 +113,3 @@
     </button>
 </div>
 {% endblock %}
-
-    {% block extra_scripts %}{% endblock %}

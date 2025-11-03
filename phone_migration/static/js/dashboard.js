@@ -1,7 +1,8 @@
 let deviceStatus = null;
     let options = {
-        dry_run: true,  // Default to dry run for safety
-        notify: true    // Default to notifications enabled
+        dry_run: true,           // Default to dry run for safety
+        notify: true,            // Default to notifications enabled
+        rename_duplicates: true  // Default to renaming duplicates on conflict
     };
     let pollInterval = null;
     let isRunning = false;
@@ -13,6 +14,12 @@ let deviceStatus = null;
         try {
             const status = await apiGet('/api/status');
             deviceStatus = status;
+            
+            // Update button state based on connection status
+            const runBtn = document.getElementById('run-btn');
+            const manualBtn = document.getElementById('manual-btn');
+            if (runBtn) runBtn.disabled = !status.connected;
+            if (manualBtn) manualBtn.disabled = !status.connected;
             
             const statusHtml = status.connected
                 ? `
@@ -39,9 +46,9 @@ let deviceStatus = null;
                         <span class="status-badge disconnected"><i class="fas fa-times-circle"></i> Disconnected</span>
                     </div>
                     <div style="color: #94a3b8; line-height: 1.8;">
-                        <p>No phone connected or device not registered</p>
+                        <p><strong>No device connected or profile not configured</strong></p>
                         <p style="margin-top: 10px; font-size: 14px; color: #64748b;">
-                            <i class="fas fa-info-circle"></i> Connect your phone via USB and enable File Transfer mode
+                            <i class="fas fa-info-circle"></i> Connect your phone via USB and enable File Transfer mode, or run <code>phone-sync --add-device</code>
                         </p>
                     </div>
                 `;
@@ -98,10 +105,11 @@ let deviceStatus = null;
         // Clear previous results immediately
         document.getElementById('stats-card').style.display = 'none';
         document.getElementById('output-card').style.display = 'none';
-        document.getElementById('stat-moved').textContent = '0';
-        document.getElementById('stat-backed-up').textContent = '0';
-        document.getElementById('stat-synced').textContent = '0';
+        document.getElementById('stat-copied').textContent = '0';
+        document.getElementById('stat-skipped').textContent = '0';
+        document.getElementById('stat-deleted').textContent = '0';
         document.getElementById('stat-errors').textContent = '0';
+        document.getElementById('smart-copy-progress').style.display = 'none';
         
         updateRunStatus('running', 'Running auto rules...');
         document.getElementById('manual-selection-card').style.display = 'none';
@@ -113,7 +121,8 @@ let deviceStatus = null;
         try {
             const result = await apiPost('/api/run', {
                 dry_run: options.dry_run,
-                notify: options.notify
+                notify: options.notify,
+                rename_duplicates: options.rename_duplicates
             });
             
             if (result.success) {
@@ -156,10 +165,24 @@ let deviceStatus = null;
                 const status = await apiGet('/api/run/status');
                 
                 if (status.stats) {
-                    document.getElementById('stat-moved').textContent = status.stats.moved || 0;
-                    document.getElementById('stat-backed-up').textContent = status.stats.backed_up || 0;
-                    document.getElementById('stat-synced').textContent = status.stats.synced || 0;
+                    document.getElementById('stat-copied').textContent = status.stats.copied || 0;
+                    document.getElementById('stat-skipped').textContent = status.stats.skipped || 0;
+                    document.getElementById('stat-deleted').textContent = status.stats.deleted || 0;
                     document.getElementById('stat-errors').textContent = status.stats.errors || 0;
+                    
+                    // Show smart-copy progress if available
+                    if (status.stats.smart_copy_total && status.stats.smart_copy_current !== undefined) {
+                        const total = status.stats.smart_copy_total;
+                        const current = status.stats.smart_copy_current;
+                        const percent = (current / total) * 100;
+                        const remaining = total - current;
+                        
+                        document.getElementById('smart-copy-progress').style.display = 'block';
+                        document.getElementById('smart-copy-current').textContent = `Processing: ${current}/${total} files (${remaining} remaining) - ${percent.toFixed(1)}%`;
+                        document.getElementById('smart-copy-bar').style.width = percent + '%';
+                    } else {
+                        document.getElementById('smart-copy-progress').style.display = 'none';
+                    }
                 }
                 
                 if (status.logs && status.logs.length > 0) {
@@ -211,20 +234,32 @@ let deviceStatus = null;
             }
             
             if (currentOp) {
+                // Existing stats matching
                 const copiedMatch = line.match(/Copied:\s*(\d+)/);
                 const skippedMatch = line.match(/Skipped:\s*(\d+)/);
                 const deletedMatch = line.match(/Deleted:\s*(\d+)/);
                 const syncedMatch = line.match(/Synced:\s*(\d+)/);
+                const resumedMatch = line.match(/Resumed:\s*(\d+)/);
+                const failedMatch = line.match(/Failed:\s*(\d+)/);
                 
                 if (copiedMatch) currentOp.stats.copied = parseInt(copiedMatch[1]);
                 if (skippedMatch) currentOp.stats.skipped = parseInt(skippedMatch[1]);
                 if (deletedMatch) currentOp.stats.deleted = parseInt(deletedMatch[1]);
                 if (syncedMatch) currentOp.stats.synced = parseInt(syncedMatch[1]);
-                const resumedMatch = line.match(/Resumed:\s*(\d+)/);
-                const failedMatch = line.match(/Failed:\s*(\d+)/);
-                
                 if (resumedMatch) currentOp.stats.resumed = parseInt(resumedMatch[1]);
                 if (failedMatch) currentOp.stats.failed = parseInt(failedMatch[1]);
+                
+                // New: Progress tracking for smart-copy
+                const totalMatch = line.match(/Total files:\s*(\d+)/);
+                const progressMatch = line.match(/Progress:\s*(\d+)\/(\d+)/);
+                const percentMatch = line.match(/(\d+(?:\.\d+)?)%/);
+                
+                if (totalMatch) currentOp.stats.total = parseInt(totalMatch[1]);
+                if (progressMatch) {
+                    currentOp.stats.current = parseInt(progressMatch[1]);
+                    currentOp.stats.total = parseInt(progressMatch[2]);
+                }
+                if (percentMatch) currentOp.stats.percent = parseFloat(percentMatch[1]);
             }
         }
         
@@ -247,15 +282,33 @@ let deviceStatus = null;
         displayedOperations.add(opKey);
         
         const modeClass = op.mode.toLowerCase().replace(' ', '_');
-        if (op.stats.resumed > 0) statsHtml += `<div style="display: flex; align-items: center; gap: 6px;"><i class="fas fa-redo" style="color: var(--info);"></i> <span>${op.stats.resumed} resumed</span></div>`;
-        if (op.stats.failed > 0) statsHtml += `<div style="display: flex; align-items: center; gap: 6px;"><i class="fas fa-exclamation-triangle" style="color: var(--warning);"></i> <span>${op.stats.failed} failed</span></div>`;
         let statsHtml = '';
         if (op.stats.copied > 0) statsHtml += `<div style="display: flex; align-items: center; gap: 6px;"><i class="fas fa-check" style="color: var(--success);"></i> <span>${op.stats.copied} copied</span></div>`;
         if (op.stats.skipped > 0) statsHtml += `<div style="display: flex; align-items: center; gap: 6px;"><i class="fas fa-forward" style="color: var(--text-muted);"></i> <span>${op.stats.skipped} skipped</span></div>`;
         if (op.stats.deleted > 0) statsHtml += `<div style="display: flex; align-items: center; gap: 6px;"><i class="fas fa-trash" style="color: var(--danger);"></i> <span>${op.stats.deleted} deleted</span></div>`;
         if (op.stats.synced > 0) statsHtml += `<div style="display: flex; align-items: center; gap: 6px;"><i class="fas fa-sync" style="color: var(--info);"></i> <span>${op.stats.synced} synced</span></div>`;
+        if (op.stats.resumed > 0) statsHtml += `<div style="display: flex; align-items: center; gap: 6px;"><i class="fas fa-redo" style="color: var(--info);"></i> <span>${op.stats.resumed} resumed</span></div>`;
+        if (op.stats.failed > 0) statsHtml += `<div style="display: flex; align-items: center; gap: 6px;"><i class="fas fa-exclamation-triangle" style="color: var(--warning);"></i> <span>${op.stats.failed} failed</span></div>`;
         
         if (!statsHtml) statsHtml = '<div style="color: var(--text-muted);"><i class="fas fa-check-circle"></i> No changes</div>';
+        
+        // Build progress bar for smart-copy
+        let progressHtml = '';
+        if (op.mode === 'Smart Copy' && op.stats.total) {
+            const percent = op.stats.percent || (op.stats.current / op.stats.total * 100);
+            const remaining = op.stats.total - (op.stats.copied || 0) - (op.stats.skipped || 0);
+            progressHtml = `
+                <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border-subtle);">
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 12px;">
+                        <span>Progress: ${op.stats.copied || 0}/${op.stats.total} ${remaining > 0 ? `(${remaining} remaining)` : ''}</span>
+                        <span style="color: var(--accent); font-weight: 600;">${percent.toFixed(1)}%</span>
+                    </div>
+                    <div style="width: 100%; height: 6px; background: rgba(0,0,0,0.3); border-radius: 3px; overflow: hidden;">
+                        <div style="height: 100%; background: linear-gradient(90deg, var(--info), var(--success)); width: ${percent}%; transition: width 300ms ease;"></div>
+                    </div>
+                </div>
+            `;
+        }
         
         const opCard = document.createElement('div');
         opCard.className = 'operation-card';
@@ -270,6 +323,7 @@ let deviceStatus = null;
                 <i class="fas fa-mobile-alt"></i> ${op.source} <i class="fas fa-arrow-right"></i> <i class="fas fa-desktop"></i> ${op.dest}
             </div>
             <div style="display: flex; gap: 16px; font-size: 13px;">${statsHtml}</div>
+            ${progressHtml}
         `;
         container.appendChild(opCard);
     }
@@ -281,9 +335,6 @@ let deviceStatus = null;
         document.getElementById('manual-btn').disabled = false;
         document.getElementById('manual-btn').innerHTML = '<i class="fas fa-hand-paper"></i> Run Manual Rules';
     }
-        // Clear previous results
-        document.getElementById('stats-card').style.display = 'none';
-        document.getElementById('output-card').style.display = 'none';
     
     async function openManualRulesModal() {
         if (!deviceStatus || !deviceStatus.connected) {
@@ -369,10 +420,11 @@ let deviceStatus = null;
         // Clear previous results immediately
         document.getElementById('stats-card').style.display = 'none';
         document.getElementById('output-card').style.display = 'none';
-        document.getElementById('stat-moved').textContent = '0';
-        document.getElementById('stat-backed-up').textContent = '0';
-        document.getElementById('stat-synced').textContent = '0';
+        document.getElementById('stat-copied').textContent = '0';
+        document.getElementById('stat-skipped').textContent = '0';
+        document.getElementById('stat-deleted').textContent = '0';
         document.getElementById('stat-errors').textContent = '0';
+        document.getElementById('smart-copy-progress').style.display = 'none';
         
         // Run with specific rule IDs
         isRunning = true;
@@ -392,7 +444,8 @@ let deviceStatus = null;
             const result = await apiPost('/api/run', {
                 dry_run: options.dry_run,
                 rule_ids: selectedRuleIds,
-                notify: options.notify
+                notify: options.notify,
+                rename_duplicates: options.rename_duplicates
             });
             
             if (result.success) {

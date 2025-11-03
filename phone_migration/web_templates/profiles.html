@@ -1,10 +1,13 @@
 {% extends "base.html" %}
 {% block title %}Profiles - Phone Migration Tool{% endblock %}
 
+{% block extra_styles %}
 <link rel="stylesheet" href="{{ url_for('static', filename='css/profiles.css') }}">
-    {% block extra_styles %}
+{% endblock %}
 
-<script src="{{ url_for(\'static\', filename=\'js/profiles.js\') }}"></script>{% endblock %}
+{% block extra_scripts %}
+<script src="{{ url_for('static', filename='js/profiles.js') }}"></script>
+{% endblock %}
 
 {% block content %}
 <div class="card">
@@ -59,5 +62,3 @@
     </div>
 </div>
 {% endblock %}
-
-    {% block extra_scripts %}{% endblock %}
