@@ -26,8 +26,36 @@ current_run_status = {
     "logs": []
 }
 
-# History storage (in-memory for now)
+# History storage file path
+HISTORY_FILE = Path.home() / ".config" / "phone-migration" / "history.json"
+
+# History storage (persisted to disk)
 run_history = []
+
+
+def load_history():
+    """Load history from disk."""
+    global run_history
+    try:
+        if HISTORY_FILE.exists():
+            with open(HISTORY_FILE, 'r') as f:
+                run_history = json.load(f)
+    except Exception as e:
+        print(f"Warning: Failed to load history: {e}")
+        run_history = []
+
+
+def save_history():
+    """Save history to disk."""
+    try:
+        # Ensure directory exists
+        HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
+        
+        # Write history to file
+        with open(HISTORY_FILE, 'w') as f:
+            json.dump(run_history, f, indent=2)
+    except Exception as e:
+        print(f"Warning: Failed to save history: {e}")
 
 
 @app.route('/')
@@ -259,6 +287,9 @@ def api_run():
             # Keep only last 100 runs
             if len(run_history) > 100:
                 run_history.pop()
+            
+            # Persist to disk
+            save_history()
     
     thread = threading.Thread(target=run_sync, daemon=True)
     thread.start()
@@ -473,6 +504,9 @@ def api_browse_desktop():
 
 def start_web_ui(host='127.0.0.1', port=8080, debug=False):
     """Start the web UI server."""
+    # Load history from disk on startup
+    load_history()
+    
     print(f"\n{'='*60}")
     print(f"📱 Phone Migration Tool - Web UI")
     print(f"{'='*60}\n")

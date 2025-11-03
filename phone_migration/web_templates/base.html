@@ -9,25 +9,25 @@
         :root {
             --bg-app: #0C0E12;
             --bg-content: #0A0A0B;
-            --bg-sidebar: #171A1F;
-            --menu-item: #1C2026;
-            --menu-item-hover: #21262E;
+            --bg-sidebar: #14161B;
+            --menu-item: #1A1D24;
+            --menu-item-hover: #1F232A;
             --surface: #111318;
-            --surface-hover: #161922;
-            --border-subtle: rgba(255,255,255,.08);
-            --border-strong: rgba(255,255,255,.16);
-            --text: #F2F4F7;
-            --text-muted: #C7CED9;
-            --icon-idle: #A7B0C0;
+            --surface-hover: #151821;
+            --border-subtle: rgba(255,255,255,.06);
+            --border-strong: rgba(255,255,255,.12);
+            --text: #E8EBF0;
+            --text-muted: #9BA3B4;
+            --icon-idle: #6B7280;
             --accent: #8B5CF6;
             --info: #60A5FA;
-            --success: #22C55E;
+            --success: #10B981;
             --warning: #F59E0B;
             --danger: #EF4444;
-            --radius-card: 16px;
-            --radius-pill: 12px;
-            --shadow-card: 0 6px 24px rgba(0,0,0,.28), 0 2px 8px rgba(0,0,0,.18);
-            --shadow-card-hover: 0 10px 30px rgba(0,0,0,.32), 0 3px 10px rgba(0,0,0,.20);
+            --radius-card: 12px;
+            --radius-pill: 8px;
+            --shadow-card: 0 2px 8px rgba(0,0,0,.2);
+            --shadow-card-hover: 0 4px 12px rgba(0,0,0,.25);
             --easing: cubic-bezier(.22,.61,.36,1);
         }
         
@@ -44,25 +44,25 @@
         }
         
         body {
-            font-family: Inter, 'SF Pro Text', 'Segoe UI', Roboto, system-ui, sans-serif;
+            font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', Roboto, system-ui, sans-serif;
             background: var(--bg-content);
             color: var(--text);
-            line-height: 1.55;
-            font-size: 16px;
-            font-weight: 500;
+            line-height: 1.6;
+            font-size: 15px;
+            font-weight: 400;
         }
         
         .container {
             max-width: 1400px;
             margin: 0 auto;
-            padding: 24px;
+            padding: 32px;
         }
         
         /* Header */
         header {
             background: var(--bg-sidebar);
             color: var(--text);
-            padding: 20px 0;
+            padding: 24px 0;
             border-bottom: 1px solid var(--border-subtle);
         }
         
@@ -70,46 +70,49 @@
             display: flex;
             justify-content: space-between;
             align-items: center;
+            padding: 0 32px;
         }
         
         header h1 {
-            font-size: 18px;
+            font-size: 19px;
             font-weight: 600;
             display: flex;
             align-items: center;
-            gap: 10px;
+            gap: 12px;
+            letter-spacing: -0.3px;
         }
         
         header h1 i {
             color: var(--accent);
+            font-size: 20px;
         }
         
         nav {
             display: flex;
-            gap: 8px;
+            gap: 6px;
         }
         
         nav a {
-            color: var(--text);
+            color: var(--text-muted);
             text-decoration: none;
-            padding: 8px 16px;
+            padding: 10px 18px;
             border-radius: var(--radius-pill);
-            transition: all 170ms var(--easing);
+            transition: all 120ms var(--easing);
             font-size: 14px;
             font-weight: 500;
-            background: var(--menu-item);
-            border: 1px solid var(--border-subtle);
+            background: transparent;
+            border: 1px solid transparent;
         }
         
         nav a:hover {
             color: var(--text);
             background: var(--menu-item-hover);
-            border-color: var(--border-strong);
+            border-color: var(--border-subtle);
         }
         
         nav a.active {
             color: var(--text);
-            background: #1F232A;
+            background: var(--menu-item-hover);
             border-color: var(--border-strong);
         }
         
@@ -125,64 +128,70 @@
         
         /* Main Content */
         main {
-            margin-top: 30px;
+            margin-top: 32px;
         }
         
         .card {
-            background: linear-gradient(180deg, #131721 0%, #0F1217 100%);
+            background: var(--surface);
             border: 1px solid var(--border-subtle);
             border-radius: var(--radius-card);
-            padding: 24px;
-            margin-bottom: 20px;
-            box-shadow: var(--shadow-card), inset 0 1px 0 rgba(255,255,255,.04);
-            transition: transform 170ms var(--easing), box-shadow 170ms var(--easing), background-color 170ms var(--easing), border-color 170ms var(--easing);
+            padding: 28px 32px;
+            margin-bottom: 24px;
+            box-shadow: var(--shadow-card);
+            transition: border-color 120ms var(--easing);
         }
         
         .card:hover, .card:focus-within {
-            transform: translateY(-0.5px);
             border-color: var(--border-strong);
-            background: var(--surface-hover);
-            box-shadow: var(--shadow-card-hover), inset 0 1px 0 rgba(255,255,255,.04);
         }
         
         .card h2 {
-            font-size: 16px;
-            margin-bottom: 20px;
+            font-size: 17px;
+            margin-bottom: 24px;
             color: var(--text);
             font-weight: 600;
-            line-height: 1.4;
-            letter-spacing: -0.1px;
+            line-height: 1.3;
+            letter-spacing: -0.2px;
         }
         
         .card h2 i {
             color: var(--accent);
             margin-right: 10px;
+            font-size: 18px;
         }
         
         /* Status Badge */
         .status-badge {
-            display: inline-block;
-            padding: 6px 12px;
-            border-radius: 20px;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 16px;
+            border-radius: var(--radius-pill);
             font-size: 14px;
-            font-weight: 500;
+            font-weight: 600;
         }
         
         .status-badge.connected {
-            background: var(--success);
-            color: white;
+            background: rgba(16,185,129,0.12);
+            color: var(--success);
+            border: 1px solid rgba(16,185,129,0.2);
+        }
+        
+        .status-badge.connected i {
+            color: var(--success);
         }
         
         .status-badge.disconnected {
-            background: var(--danger);
-            color: white;
+            background: rgba(107,114,128,0.12);
+            color: var(--text-muted);
+            border: 1px solid var(--border-subtle);
         }
         
         /* Buttons */
         .btn {
             display: inline-block;
-            padding: 11px 20px;
-            background: transparent;
+            padding: 12px 24px;
+            background: var(--surface-hover);
             color: var(--text);
             border: 1px solid var(--border-subtle);
             border-radius: var(--radius-pill);
@@ -190,16 +199,16 @@
             font-weight: 500;
             cursor: pointer;
             text-decoration: none;
-            transition: all 170ms var(--easing);
+            transition: all 100ms var(--easing);
         }
         
         .btn:hover {
-            background: var(--surface-hover);
+            background: var(--menu-item-hover);
             border-color: var(--border-strong);
         }
         
         .btn:active {
-            transform: translateY(0);
+            transform: scale(0.98);
         }
         
         .btn-secondary {
@@ -215,35 +224,35 @@
         }
         
         .btn-danger {
-            background: transparent;
+            background: rgba(239,68,68,0.1);
             color: var(--danger);
-            border-color: var(--danger);
+            border-color: rgba(239,68,68,0.2);
         }
         
         .btn-danger:hover {
-            background: rgba(239,68,68,0.1);
-            border-color: var(--danger);
+            background: rgba(239,68,68,0.15);
+            border-color: rgba(239,68,68,0.3);
         }
         
         .btn-success {
-            background: transparent;
+            background: rgba(16,185,129,0.12);
             color: var(--success);
-            border-color: var(--success);
+            border-color: rgba(16,185,129,0.2);
         }
         
         .btn-success:hover {
-            background: rgba(34,197,94,0.1);
-            border-color: var(--success);
+            background: rgba(16,185,129,0.18);
+            border-color: rgba(16,185,129,0.3);
         }
         
         /* Form Elements */
         .form-group {
-            margin-bottom: 16px;
+            margin-bottom: 20px;
         }
         
         .form-group label {
             display: block;
-            margin-bottom: 6px;
+            margin-bottom: 8px;
             font-weight: 500;
             color: var(--text-muted);
             font-size: 14px;
@@ -253,13 +262,13 @@
         .form-group select,
         .form-control {
             width: 100%;
-            padding: 11px 14px;
-            background: #141821;
+            padding: 12px 16px;
+            background: #0D0F14;
             border: 1px solid var(--border-subtle);
             border-radius: var(--radius-pill);
             font-size: 14px;
             color: var(--text);
-            transition: all 170ms var(--easing);
+            transition: all 120ms var(--easing);
         }
         
         .form-group input:focus,
@@ -267,15 +276,15 @@
         .form-control:focus {
             outline: none;
             border-color: var(--accent);
-            background: #1A1E25;
-            box-shadow: 0 0 0 3px rgba(139,92,246,0.22);
+            background: #0F1217;
+            box-shadow: 0 0 0 3px rgba(139,92,246,0.15);
         }
         
         /* Grid Layout */
         .grid {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-            gap: 20px;
+            gap: 24px;
         }
         
         /* Loading Spinner */
@@ -296,36 +305,29 @@
         
         /* Alerts */
         .alert {
-            padding: 12px 16px;
-            border-radius: 8px;
-            margin-bottom: 16px;
+            padding: 14px 18px;
+            border-radius: var(--radius-pill);
+            margin-bottom: 20px;
+            font-size: 14px;
+            line-height: 1.5;
         }
         
         .alert-success {
-            background: rgba(34,197,94,0.10);
-            color: #D9FBE8;
-            border: 1px solid var(--success);
-            border-radius: var(--radius-pill);
-            font-size: 14px;
-            line-height: 1.55;
+            background: rgba(16,185,129,0.1);
+            color: #D1FAE5;
+            border: 1px solid rgba(16,185,129,0.2);
         }
         
         .alert-danger {
-            background: #2A1214;
-            color: #FFDDE0;
-            border: 1px solid var(--danger);
-            border-radius: var(--radius-pill);
-            font-size: 14px;
-            line-height: 1.55;
+            background: rgba(239,68,68,0.1);
+            color: #FEE2E2;
+            border: 1px solid rgba(239,68,68,0.2);
         }
         
         .alert-info {
-            background: rgba(96,165,250,0.10);
-            color: #D6E9FF;
-            border: 1px solid var(--info);
-            border-radius: var(--radius-pill);
-            font-size: 14px;
-            line-height: 1.55;
+            background: rgba(96,165,250,0.1);
+            color: #DBEAFE;
+            border: 1px solid rgba(96,165,250,0.2);
         }
     </style>
     {% block extra_styles %}{% endblock %}
@@ -338,7 +340,6 @@
                 <a href="/" {% if request.path == '/' %}class="active"{% endif %}><i class="fas fa-th-large"></i> Dashboard</a>
                 <a href="/profiles" {% if request.path == '/profiles' %}class="active"{% endif %}><i class="fas fa-user-circle"></i> Profiles</a>
                 <a href="/rules" {% if request.path == '/rules' %}class="active"{% endif %}><i class="fas fa-cog"></i> Rules</a>
-                <a href="/run" {% if request.path == '/run' %}class="active"{% endif %}><i class="fas fa-play-circle"></i> Run</a>
                 <a href="/history" {% if request.path == '/history' %}class="active"{% endif %}><i class="fas fa-history"></i> History</a>
             </nav>
         </div>

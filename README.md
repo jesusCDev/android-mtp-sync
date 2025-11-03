@@ -179,9 +179,21 @@ The web UI provides a user-friendly interface with:
 - Live operation execution with progress tracking
 - Operation history and logs
 
-## Configuration File
+## Configuration Files
 
+### Main Configuration
 Configuration is stored in JSON at: `~/Programming/project-cli/phone-migration/config.json`
+
+### History Storage
+Operation history is persisted at: `~/.config/phone-migration/history.json`
+
+This file stores the last 100 sync operations with:
+- Timestamps and profile information
+- Success/failure status
+- File operation statistics (moved, synced, errors)
+- Complete operation logs
+
+History is automatically loaded when the web UI starts and saved after each operation.
 
 ### Example Configuration
 
@@ -285,9 +297,12 @@ Open your browser to: **http://127.0.0.1:8080**
 ### Web UI Features
 
 #### 1. Dashboard
-- See device connection status at a glance
-- Quick access to all features
-- View rule counts and last sync status
+- **Improved Device Status**: Horizontal layout showing Device, Profile, and Rules in a clean grid
+- **Run Operations**: Execute rules with real-time progress tracking
+- **Dry Run & Notifications**: Toggle options before running
+- **Manual Rules**: Run specific manual-only rules on demand
+- **Live Statistics**: See files moved, backed up, synced, and errors in real-time
+- **Operation History**: Persistent history across app restarts
 
 #### 2. Profiles Page
 - Register new devices with one click
@@ -316,9 +331,14 @@ Open your browser to: **http://127.0.0.1:8080**
 - Option for dry-run preview
 
 #### 5. History Page
-- View past operation logs
-- See success/failure status
-- Review file counts and statistics
+- **Persistent Storage**: History is now saved to `~/.config/phone-migration/history.json`
+- **Survives Restarts**: View operation history even after closing and reopening the web UI
+- View past operation logs with expandable details
+- See success/failure status with color-coded badges
+- Review file counts and statistics for each run
+- Filter by status (success/error) and limit results
+- Relative timestamps ("5 minutes ago", "2 hours ago", etc.)
+- Last 100 operations are kept
 
 ### Using the Folder Browser
 

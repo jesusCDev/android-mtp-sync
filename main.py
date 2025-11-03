@@ -3,6 +3,8 @@
 
 import argparse
 import sys
+import os
+import signal
 from phone_migration import config as cfg, device, runner, browser
 
 
@@ -109,6 +111,11 @@ Automate file transfers between Android phone (MTP) and Linux desktop.
     g.add_argument("--web", action="store_true",
                    help="🌐 Start web UI server (http://localhost:8080)")
     
+    # Web UI options
+    web_opts = p.add_argument_group('Web UI options (for --web)')
+    web_opts.add_argument("--restart", action="store_true",
+                         help="Kill any existing instance before starting")
+    
     # Device options
     device_opts = p.add_argument_group('Device options (for --add-device)')
     device_opts.add_argument("-n", "--name", metavar="NAME",
@@ -149,6 +156,34 @@ def main():
     
     # Handle web UI separately (doesn't need config loading)
     if args.web:
+        # Kill existing instance if --restart flag is used
+        if args.restart:
+            try:
+                import subprocess
+                # Find existing process
+                result = subprocess.run(
+                    ['pgrep', '-f', 'python.*main.py.*--web'],
+                    capture_output=True,
+                    text=True
+                )
+                
+                if result.returncode == 0 and result.stdout.strip():
+                    pids = result.stdout.strip().split('\n')
+                    current_pid = str(os.getpid())
+                    
+                    for pid in pids:
+                        pid = pid.strip()
+                        if pid and pid != current_pid:
+                            try:
+                                os.kill(int(pid), signal.SIGTERM)
+                                print(f"✓ Killed existing instance (PID: {pid})")
+                            except ProcessLookupError:
+                                pass  # Process already dead
+                            except PermissionError:
+                                print(f"⚠ Cannot kill PID {pid}: Permission denied", file=sys.stderr)
+            except Exception as e:
+                print(f"⚠ Could not check for existing instances: {e}", file=sys.stderr)
+        
         from phone_migration import web_ui
         web_ui.start_web_ui(host='127.0.0.1', port=8080, debug=False)
         return 0
