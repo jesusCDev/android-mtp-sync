@@ -4,10 +4,12 @@ Automate file transfers between your Android phone and Linux desktop via MTP (Me
 
 ## Features
 
+- **Web UI**: Modern web interface for managing devices, rules, and running operations with a graphical folder browser
 - **Device Profiles**: Register your phone with a unique identifier to ensure operations run on the correct device
 - **Move Operation**: Copy files from phone to desktop, then delete them from phone (great for photos/videos)
 - **Sync Operation**: Mirror desktop folders to phone with desktop as source of truth (perfect for playlists, documents)
 - **Smart Sync**: Intelligently skips unchanged files by comparing file sizes (rsync-like behavior) - saves time and bandwidth
+- **Folder Browser**: Graphical folder picker for both phone (MTP) and desktop paths - no more guessing folder names!
 - **Conflict Handling**: Automatically rename duplicates with (1), (2), etc. suffixes
 - **Dry Run Mode**: Preview operations before executing
 - **Path Flexibility**: Support for both `/DCIM/Camera` and `Internal storage/DCIM/Camera` path formats
@@ -161,6 +163,22 @@ python3 main.py --run --dry-run
 python3 main.py --run --verbose
 ```
 
+### Web UI
+
+```bash
+# Start web interface (recommended)
+python3 main.py --web
+
+# Then open http://127.0.0.1:8080 in your browser
+```
+
+The web UI provides a user-friendly interface with:
+- Dashboard showing device connection status
+- Profile management with device registration
+- Rule configuration with **graphical folder browser**
+- Live operation execution with progress tracking
+- Operation history and logs
+
 ## Configuration File
 
 Configuration is stored in JSON at: `~/Programming/project-cli/phone-migration/config.json`
@@ -250,6 +268,85 @@ All paths are normalized internally to MTP URIs.
 - **Documents**: `/Documents`
 - **Music**: `/Music`
 - **Custom folders**: Any path you create
+
+## Web UI Guide
+
+The web interface is the easiest way to use the phone migration tool.
+
+### Starting the Web UI
+
+```bash
+cd ~/Programming/project-cli/phone-migration
+python3 main.py --web
+```
+
+Open your browser to: **http://127.0.0.1:8080**
+
+### Web UI Features
+
+#### 1. Dashboard
+- See device connection status at a glance
+- Quick access to all features
+- View rule counts and last sync status
+
+#### 2. Profiles Page
+- Register new devices with one click
+- View all registered devices
+- Delete old profiles
+
+#### 3. Rules Page (with Folder Browser!)
+- Add rules with an intuitive form
+- **Browse phone folders** - click the Browse button next to Phone Path to visually navigate your phone's folder structure
+- **Browse desktop folders** - click the Browse button next to Desktop Path to navigate your computer's filesystem
+- **Folder Browser Features:**
+  - Navigate with breadcrumbs or Up button
+  - Type or paste paths directly in the path bar (press Enter to jump)
+  - Create new folders on desktop with the "New Folder" button
+  - Toggle "Show hidden" to see/hide hidden files (those starting with `.`)
+  - Files are shown but grayed out (directories only for selection)
+  - Single-click to select, double-click to navigate into folders
+  - ESC or click outside to close the browser
+- Edit or delete existing rules
+- See all rules for your connected device
+
+#### 4. Run Page
+- Execute configured rules with real-time progress
+- See which files are being transferred
+- View operation statistics
+- Option for dry-run preview
+
+#### 5. History Page
+- View past operation logs
+- See success/failure status
+- Review file counts and statistics
+
+### Using the Folder Browser
+
+The folder browser makes it easy to select paths without knowing exact folder names:
+
+**For Desktop Paths:**
+1. Click "Browse" next to Desktop Path
+2. Browser starts at your home directory (`~`)
+3. Navigate by clicking folders or using the Up button
+4. Use breadcrumbs to jump to parent folders
+5. Type/paste a path in the path bar and press Enter to jump directly
+6. Click "New Folder" to create a new destination folder
+7. Check "Show hidden" if you need to navigate to hidden folders (like `.config`)
+8. Click "Select Current Folder" when you're in the right place
+
+**For Phone Paths:**
+1. Connect your phone first (unlocked, in File Transfer mode)
+2. Click "Browse" next to Phone Path
+3. Browser shows your phone's root directories (DCIM, Download, etc.)
+4. Navigate the same way as desktop folders
+5. Common folders like `/DCIM/Camera` are easy to find by clicking
+6. Files are shown for context but cannot be selected
+
+**Tips:**
+- Hidden files are hidden by default (toggle with checkbox)
+- Desktop browsing works across the entire filesystem (including `/mnt`, `/media`)
+- Phone browsing requires the device to be connected
+- You can still type paths manually if you prefer!
 
 ## Examples
 

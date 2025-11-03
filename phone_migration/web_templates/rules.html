@@ -157,6 +157,175 @@
         margin-bottom: 16px;
         color: var(--icon-idle);
     }
+    
+    /* Folder Browser Modal */
+    .browser-modal {
+        display: none;
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(0,0,0,0.85);
+        z-index: 2000;
+        align-items: center;
+        justify-content: center;
+    }
+    
+    .browser-modal.active {
+        display: flex;
+    }
+    
+    .browser-content {
+        background: var(--surface);
+        border: 1px solid var(--border-strong);
+        border-radius: var(--radius-card);
+        width: 90%;
+        max-width: 700px;
+        max-height: 80vh;
+        display: flex;
+        flex-direction: column;
+        box-shadow: 0 24px 60px rgba(0,0,0,0.6);
+    }
+    
+    .browser-header {
+        padding: 20px 24px;
+        border-bottom: 1px solid var(--border-subtle);
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+    
+    .browser-header h3 {
+        font-size: 16px;
+        font-weight: 600;
+        color: var(--text);
+        margin: 0;
+    }
+    
+    .browser-breadcrumbs {
+        padding: 12px 24px;
+        background: rgba(0,0,0,0.2);
+        border-bottom: 1px solid var(--border-subtle);
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 13px;
+        color: var(--text-muted);
+        overflow-x: auto;
+        white-space: nowrap;
+    }
+    
+    .breadcrumb-item {
+        cursor: pointer;
+        transition: color 170ms var(--easing);
+    }
+    
+    .breadcrumb-item:hover {
+        color: var(--accent);
+    }
+    
+    .breadcrumb-separator {
+        color: var(--border-strong);
+    }
+    
+    .browser-toolbar {
+        padding: 12px 24px;
+        border-bottom: 1px solid var(--border-subtle);
+        display: flex;
+        gap: 8px;
+    }
+    
+    .browser-list {
+        flex: 1;
+        overflow-y: auto;
+        padding: 12px;
+        min-height: 300px;
+        max-height: 50vh;
+    }
+    
+    .browser-entry {
+        padding: 10px 12px;
+        margin-bottom: 4px;
+        border-radius: 8px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        transition: all 170ms var(--easing);
+        border: 1px solid transparent;
+        user-select: none;
+    }
+    
+    .browser-entry:hover {
+        background: var(--surface-hover);
+        border-color: var(--border-subtle);
+    }
+    
+    .browser-entry.selected {
+        background: rgba(139,92,246,0.15);
+        border-color: var(--accent);
+    }
+    
+    .browser-entry.disabled {
+        opacity: 0.4;
+        cursor: not-allowed;
+    }
+    
+    .browser-entry.disabled:hover {
+        background: transparent;
+        border-color: transparent;
+    }
+    
+    .browser-entry i {
+        width: 20px;
+        text-align: center;
+        color: var(--icon-idle);
+    }
+    
+    .browser-entry.type-dir i {
+        color: var(--info);
+    }
+    
+    .browser-footer {
+        padding: 16px 24px;
+        border-top: 1px solid var(--border-subtle);
+        display: flex;
+        gap: 12px;
+        justify-content: flex-end;
+    }
+    
+    .browser-error {
+        margin: 12px;
+        padding: 12px 16px;
+        background: rgba(239,68,68,0.1);
+        border: 1px solid var(--danger);
+        border-radius: 8px;
+        color: var(--danger);
+        font-size: 14px;
+    }
+    
+    .browser-empty {
+        text-align: center;
+        padding: 48px 24px;
+        color: var(--text-muted);
+    }
+    
+    .input-with-button {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+    }
+    
+    .input-with-button input {
+        flex: 1;
+    }
+    
+    .input-with-button .btn-small {
+        padding: 10px 16px;
+        font-size: 13px;
+        white-space: nowrap;
+    }
 </style>
 {% endblock %}
 
@@ -199,12 +368,22 @@
             
             <div class="form-group">
                 <label for="phone-path">Phone Path</label>
-                <input type="text" id="phone-path" placeholder="e.g., /DCIM/Camera" required>
+                <div class="input-with-button">
+                    <input type="text" id="phone-path" placeholder="e.g., /DCIM/Camera" required>
+                    <button type="button" class="btn btn-small btn-secondary" onclick="openPhoneBrowser()" aria-label="Browse phone folders">
+                        <i class="fas fa-folder-open"></i> Browse
+                    </button>
+                </div>
             </div>
             
             <div class="form-group">
                 <label for="desktop-path">Desktop Path</label>
-                <input type="text" id="desktop-path" placeholder="e.g., ~/Pictures" required>
+                <div class="input-with-button">
+                    <input type="text" id="desktop-path" placeholder="e.g., ~/Pictures" required>
+                    <button type="button" class="btn btn-small btn-secondary" onclick="openDesktopBrowser()" aria-label="Browse desktop folders">
+                        <i class="fas fa-folder-open"></i> Browse
+                    </button>
+                </div>
             </div>
             
             <div class="form-group">
@@ -219,6 +398,46 @@
                 <button type="button" class="btn btn-secondary" onclick="closeModal()" style="flex: 1;">Cancel</button>
             </div>
         </form>
+    </div>
+</div>
+
+<!-- Folder Browser Modal -->
+<div id="browser-modal" class="browser-modal">
+    <div class="browser-content">
+        <div class="browser-header">
+            <h3><i class="fas fa-folder-open"></i> <span id="browser-title">Browse Folders</span></h3>
+            <button class="close-btn" onclick="closeBrowser()">&times;</button>
+        </div>
+        
+        <div class="browser-breadcrumbs" id="browser-breadcrumbs">
+            <i class="fas fa-home"></i>
+        </div>
+        
+        <div class="browser-toolbar">
+            <button class="btn btn-small" onclick="goUpOneLevel()" id="btn-up">
+                <i class="fas fa-level-up-alt"></i> Up
+            </button>
+            <input type="text" id="browser-path-input" placeholder="Enter path..." onkeypress="if(event.key==='Enter')navigateToTypedPath()" style="flex: 1; padding: 8px 12px; background: #141821; border: 1px solid var(--border-subtle); border-radius: 8px; color: var(--text); font-size: 13px;">
+            <button class="btn btn-small btn-secondary" onclick="navigateToTypedPath()">
+                <i class="fas fa-arrow-right"></i> Go
+            </button>
+            <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; padding: 0 12px; font-size: 13px; color: var(--text-muted); user-select: none;">
+                <input type="checkbox" id="show-hidden-toggle" onchange="toggleHiddenFiles()" style="cursor: pointer;">
+                <span>Show hidden</span>
+            </label>
+            <button class="btn btn-small btn-success" onclick="showCreateFolderPrompt()" title="Create new folder">
+                <i class="fas fa-folder-plus"></i> New Folder
+            </button>
+        </div>
+        
+        <div class="browser-list" id="browser-list">
+            <div class="spinner"></div>
+        </div>
+        
+        <div class="browser-footer">
+            <button class="btn btn-secondary" onclick="closeBrowser()">Cancel</button>
+            <button class="btn btn-success" onclick="selectCurrentPath()" id="btn-select">Select Current Folder</button>
+        </div>
     </div>
 </div>
 
@@ -432,5 +651,308 @@
     
     // Load profiles on page load
     loadProfiles();
+    
+    // ========================================
+    // Folder Browser Functionality
+    // ========================================
+    
+    let browserState = {
+        type: null,  // 'phone' or 'desktop'
+        currentPath: null,
+        targetInput: null,
+        selectedPath: null,
+        loading: false,
+        showHidden: false
+    };
+    
+    function openPhoneBrowser() {
+        const input = document.getElementById('phone-path');
+        const initialPath = input.value.trim() || '/';
+        
+        browserState = {
+            type: 'phone',
+            currentPath: initialPath,
+            targetInput: input,
+            selectedPath: null,
+            loading: false,
+            showHidden: false
+        };
+        
+        // Reset toggle checkbox
+        document.getElementById('show-hidden-toggle').checked = false;
+        
+        document.getElementById('browser-title').textContent = 'Browse Phone Folders';
+        document.getElementById('browser-modal').classList.add('active');
+        loadBrowserDirectory(initialPath);
+    }
+    
+    function openDesktopBrowser() {
+        const input = document.getElementById('desktop-path');
+        let initialPath = input.value.trim();
+        
+        // Start at home directory by default
+        if (!initialPath) {
+            initialPath = '~';
+        }
+        
+        browserState = {
+            type: 'desktop',
+            currentPath: initialPath,
+            targetInput: input,
+            selectedPath: null,
+            loading: false,
+            showHidden: false
+        };
+        
+        // Reset toggle checkbox
+        document.getElementById('show-hidden-toggle').checked = false;
+        
+        document.getElementById('browser-title').textContent = 'Browse Desktop Folders';
+        document.getElementById('browser-modal').classList.add('active');
+        loadBrowserDirectory(initialPath);
+    }
+    
+    function closeBrowser() {
+        document.getElementById('browser-modal').classList.remove('active');
+        browserState = { type: null, currentPath: null, targetInput: null, selectedPath: null, loading: false };
+    }
+    
+    async function loadBrowserDirectory(path) {
+        if (browserState.loading) return;
+        
+        browserState.loading = true;
+        browserState.currentPath = path;
+        browserState.selectedPath = null;
+        
+        const listEl = document.getElementById('browser-list');
+        listEl.innerHTML = '<div class="spinner"></div>';
+        
+        try {
+            const endpoint = browserState.type === 'phone' ? '/api/browse/phone' : '/api/browse/desktop';
+            const params = new URLSearchParams({ path: path || '/' });
+            const response = await fetch(`${endpoint}?${params}`);
+            const data = await response.json();
+            
+            if (!response.ok) {
+                throw new Error(data.error || 'Failed to load directory');
+            }
+            
+            // Update current path from response
+            browserState.currentPath = data.path;
+            
+            // Update path input field
+            document.getElementById('browser-path-input').value = data.path;
+            
+            // Render breadcrumbs
+            renderBreadcrumbs(data.path);
+            
+            // Filter entries based on showHidden setting
+            let filteredEntries = data.entries;
+            if (!browserState.showHidden) {
+                filteredEntries = data.entries.filter(entry => !entry.name.startsWith('.'));
+            }
+            
+            // Render entries
+            if (filteredEntries.length === 0) {
+                const message = data.entries.length > 0 && !browserState.showHidden 
+                    ? 'No visible items (all items are hidden)' 
+                    : 'This folder is empty';
+                listEl.innerHTML = `<div class="browser-empty"><i class="fas fa-folder-open" style="font-size: 48px; color: var(--icon-idle); margin-bottom: 16px;"></i><p>${message}</p></div>`;
+            } else {
+                const html = filteredEntries.map(entry => {
+                    const isDir = entry.type === 'dir';
+                    const icon = isDir ? 'fa-folder' : 'fa-file';
+                    const disabledClass = isDir ? '' : 'disabled';
+                    
+                    return `
+                        <div class="browser-entry type-${entry.type} ${disabledClass}" 
+                             data-path="${escapeHtml(entry.path)}" 
+                             data-type="${entry.type}">
+                            <i class="fas ${icon}"></i>
+                            <span>${escapeHtml(entry.name)}</span>
+                        </div>
+                    `;
+                }).join('');
+                
+                listEl.innerHTML = html;
+                
+                // Add click handlers after rendering
+                listEl.querySelectorAll('.browser-entry.type-dir').forEach(entryEl => {
+                    entryEl.addEventListener('click', function() {
+                        const path = this.getAttribute('data-path');
+                        const type = this.getAttribute('data-type');
+                        handleEntryClick(path, type);
+                    });
+                });
+            }
+            
+            // Update up button state
+            const canGoUp = browserState.type === 'desktop' ? data.canGoUp : (data.path !== '/');
+            document.getElementById('btn-up').disabled = !canGoUp;
+            
+        } catch (error) {
+            listEl.innerHTML = `<div class="browser-error"><i class="fas fa-exclamation-triangle"></i> ${escapeHtml(error.message)}</div>`;
+        } finally {
+            browserState.loading = false;
+        }
+    }
+    
+    function handleEntryClick(path, type) {
+        if (type !== 'dir') return;
+        
+        // Check if already selected - if so, navigate into it
+        if (browserState.selectedPath === path) {
+            loadBrowserDirectory(path);
+        } else {
+            // Single click - select it
+            browserState.selectedPath = path;
+            
+            // Update UI
+            document.querySelectorAll('.browser-entry').forEach(el => {
+                el.classList.remove('selected');
+            });
+            
+            const clickedEntry = document.querySelector(`.browser-entry[data-path="${path.replace(/"/g, '\\"')}"]`);
+            if (clickedEntry) {
+                clickedEntry.classList.add('selected');
+            }
+        }
+    }
+    
+    function goUpOneLevel() {
+        const currentPath = browserState.currentPath;
+        
+        if (!currentPath || currentPath === '/') {
+            return; // Already at root
+        }
+        
+        // Compute parent path
+        const parts = currentPath.split('/').filter(p => p);
+        parts.pop();
+        const parentPath = '/' + parts.join('/');
+        
+        loadBrowserDirectory(parentPath);
+    }
+    
+    function renderBreadcrumbs(path) {
+        const breadcrumbsEl = document.getElementById('browser-breadcrumbs');
+        
+        if (!path || path === '/') {
+            breadcrumbsEl.innerHTML = '<i class="fas fa-home"></i> <span class="breadcrumb-item" data-path="/">Root</span>';
+            // Add click handler for root
+            breadcrumbsEl.querySelector('.breadcrumb-item').addEventListener('click', () => loadBrowserDirectory('/'));
+            return;
+        }
+        
+        const parts = path.split('/').filter(p => p);
+        const segments = ['<i class="fas fa-home"></i>', '<span class="breadcrumb-item" data-path="/">Root</span>'];
+        
+        let accumulated = '';
+        parts.forEach((part, index) => {
+            accumulated += '/' + part;
+            const fullPath = accumulated;
+            segments.push('<span class="breadcrumb-separator">/</span>');
+            segments.push(`<span class="breadcrumb-item" data-path="${escapeHtml(fullPath)}">${escapeHtml(part)}</span>`);
+        });
+        
+        breadcrumbsEl.innerHTML = segments.join(' ');
+        
+        // Add click handlers to all breadcrumb items
+        breadcrumbsEl.querySelectorAll('.breadcrumb-item').forEach(item => {
+            item.addEventListener('click', function() {
+                const targetPath = this.getAttribute('data-path');
+                loadBrowserDirectory(targetPath);
+            });
+        });
+    }
+    
+    function selectCurrentPath() {
+        const pathToSelect = browserState.selectedPath || browserState.currentPath;
+        
+        if (!pathToSelect) {
+            showAlert('Please select a folder', 'danger');
+            return;
+        }
+        
+        if (browserState.targetInput) {
+            browserState.targetInput.value = pathToSelect;
+        }
+        
+        closeBrowser();
+    }
+    
+    function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+    
+    function navigateToTypedPath() {
+        const pathInput = document.getElementById('browser-path-input');
+        const path = pathInput.value.trim();
+        
+        if (path) {
+            loadBrowserDirectory(path);
+        }
+    }
+    
+    function toggleHiddenFiles() {
+        const checkbox = document.getElementById('show-hidden-toggle');
+        browserState.showHidden = checkbox.checked;
+        
+        // Reload current directory with new filter
+        if (browserState.currentPath) {
+            loadBrowserDirectory(browserState.currentPath);
+        }
+    }
+    
+    async function showCreateFolderPrompt() {
+        const folderName = prompt('Enter new folder name:');
+        
+        if (!folderName || !folderName.trim()) {
+            return;
+        }
+        
+        const newFolderPath = browserState.currentPath + (browserState.currentPath.endsWith('/') ? '' : '/') + folderName.trim();
+        
+        try {
+            // For desktop, we can create folders via an API endpoint
+            if (browserState.type === 'desktop') {
+                const response = await fetch('/api/folder/create', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ path: newFolderPath })
+                });
+                
+                const result = await response.json();
+                
+                if (response.ok && result.success) {
+                    showAlert('Folder created successfully!', 'success');
+                    // Refresh current directory
+                    loadBrowserDirectory(browserState.currentPath);
+                } else {
+                    showAlert(result.error || 'Failed to create folder', 'danger');
+                }
+            } else {
+                showAlert('Creating folders on phone is not supported yet', 'info');
+            }
+        } catch (error) {
+            showAlert('Error: ' + error.message, 'danger');
+        }
+    }
+    
+    // Close browser on ESC key
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && browserState.type) {
+            closeBrowser();
+        }
+    });
+    
+    // Close browser on backdrop click
+    document.getElementById('browser-modal').addEventListener('click', (e) => {
+        if (e.target.id === 'browser-modal') {
+            closeBrowser();
+        }
+    });
 </script>
 {% endblock %}

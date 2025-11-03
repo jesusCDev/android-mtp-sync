@@ -9,7 +9,7 @@ from pathlib import Path
 from flask import Flask, render_template, jsonify, request, redirect, url_for
 from flask_cors import CORS
 
-from . import config as cfg, device, runner, operations
+from . import config as cfg, device, runner, operations, browser
 
 
 app = Flask(__name__, 
@@ -343,6 +343,132 @@ def api_history():
     
     # Return the requested number of history items
     return jsonify(run_history[:limit])
+
+
+@app.route('/api/browse/phone')
+def api_browse_phone():
+    """Browse phone directories."""
+    phone_path = request.args.get('path', '/')
+    
+    # Detect connected device
+    config = cfg.load_config()
+    profile = runner.detect_connected_device(config, verbose=False)
+    
+    if not profile:
+        return jsonify({"error": "No device connected"}), 409
+    
+    device_info = profile.get("device", {})
+    activation_uri = device_info.get("activation_uri", "")
+    
+    if not activation_uri:
+        return jsonify({"error": "Device activation URI not found"}), 500
+    
+    try:
+        # Use browser.list_phone_directory to get contents
+        entries_raw = browser.list_phone_directory(activation_uri, phone_path)
+        
+        # Transform to API format
+        entries = []
+        for entry in entries_raw:
+            entries.append({
+                "name": entry["name"],
+                "path": entry["path"],
+                "type": "dir" if entry["is_directory"] else "file",
+                "size": entry.get("size", 0)
+            })
+        
+        return jsonify({
+            "path": phone_path,
+            "entries": entries,
+            "deviceConnected": True
+        })
+    
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/folder/create', methods=['POST'])
+def api_create_folder():
+    """Create a new folder on desktop."""
+    import os
+    
+    data = request.json
+    folder_path = data.get('path')
+    
+    if not folder_path:
+        return jsonify({"error": "Path is required"}), 400
+    
+    try:
+        # Normalize and expand path
+        resolved_path = os.path.abspath(os.path.expanduser(folder_path))
+        
+        # Check if already exists
+        if os.path.exists(resolved_path):
+            return jsonify({"error": "Folder already exists"}), 409
+        
+        # Create the folder
+        os.makedirs(resolved_path, exist_ok=False)
+        
+        return jsonify({"success": True, "path": resolved_path})
+    
+    except PermissionError:
+        return jsonify({"error": "Permission denied"}), 403
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/browse/desktop')
+def api_browse_desktop():
+    """Browse desktop directories."""
+    import os
+    from pathlib import Path
+    
+    desktop_path = request.args.get('path', str(Path.home()))
+    
+    # Normalize and resolve path
+    try:
+        resolved_path = os.path.abspath(os.path.expanduser(desktop_path))
+        
+        if not os.path.exists(resolved_path):
+            return jsonify({"error": "Directory not found"}), 404
+        
+        if not os.path.isdir(resolved_path):
+            return jsonify({"error": "Path is not a directory"}), 400
+        
+        # List directory contents
+        entries = []
+        try:
+            with os.scandir(resolved_path) as it:
+                for entry in it:
+                    try:
+                        is_dir = entry.is_dir(follow_symlinks=False)
+                        entries.append({
+                            "name": entry.name,
+                            "path": entry.path,
+                            "type": "dir" if is_dir else "file"
+                        })
+                    except (PermissionError, OSError):
+                        # Skip entries we can't access
+                        continue
+        except PermissionError:
+            return jsonify({"error": "Permission denied"}), 403
+        
+        # Sort: directories first, then alphabetically
+        entries.sort(key=lambda x: (x["type"] != "dir", x["name"].lower()))
+        
+        # Check if we can go up
+        can_go_up = resolved_path != '/'
+        
+        return jsonify({
+            "path": resolved_path,
+            "entries": entries,
+            "canGoUp": can_go_up
+        })
+    
+    except PermissionError:
+        return jsonify({"error": "Permission denied"}), 403
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 def start_web_ui(host='127.0.0.1', port=8080, debug=False):
