@@ -14,8 +14,12 @@ from . import config as cfg, device, runner, operations, browser
 
 app = Flask(__name__, 
             template_folder='web_templates',
-            static_folder='web_static')
+            static_folder='static',
+            static_url_path='/static')
 CORS(app)  # Enable CORS for API requests
+
+# Disable aggressive caching during development
+app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0
 
 # Global state
 current_run_status = {
