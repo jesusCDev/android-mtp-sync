@@ -10,7 +10,10 @@ Automate file transfers between your Android phone and Linux desktop via MTP (Me
 - **Sync Operation**: Mirror desktop folders to phone with desktop as source of truth (perfect for playlists, documents)
 - **Smart Sync**: Intelligently skips unchanged files by comparing file sizes (rsync-like behavior) - saves time and bandwidth
 - **Folder Browser**: Graphical folder picker for both phone (MTP) and desktop paths - no more guessing folder names!
-- **Conflict Handling**: Automatically rename duplicates with (1), (2), etc. suffixes
+- **Conflict Handling**: Toggle between two strategies for duplicate files:
+  - **Rename on Conflict** (default): Automatically rename duplicates with (1), (2), etc. suffixes
+  - **Skip on Conflict**: Skip files that already exist without renaming them
+- **Device Accessibility Check**: Automatically detects when phone is locked and inaccessible
 - **Dry Run Mode**: Preview operations before executing
 - **Path Flexibility**: Support for both `/DCIM/Camera` and `Internal storage/DCIM/Camera` path formats
 
@@ -176,6 +179,7 @@ The web UI provides a user-friendly interface with:
 - Dashboard showing device connection status
 - Profile management with device registration
 - Rule configuration with **graphical folder browser**
+- **Conflict handling toggle**: Choose between renaming or skipping duplicate files
 - Live operation execution with progress tracking
 - Operation history and logs
 
@@ -329,6 +333,10 @@ Open your browser to: **http://127.0.0.1:8080**
 - See which files are being transferred
 - View operation statistics
 - Option for dry-run preview
+- **Rename on Conflict toggle**: Control duplicate file handling:
+  - **Enabled** (default): Rename duplicates as `filename (1).ext`, `filename (2).ext`, etc.
+  - **Disabled**: Skip files that already exist without renaming them
+  - Affects all operation types: move, copy, smart copy, and sync
 
 #### 5. History Page
 - **Persistent Storage**: History is now saved to `~/.config/phone-migration/history.json`
