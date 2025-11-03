@@ -2,7 +2,9 @@
 {% block title %}Run - Phone Migration Tool{% endblock %}
 
 <link rel="stylesheet" href="{{ url_for('static', filename='css/run.css') }}">
-    {% block extra_styles %}{% endblock %}
+    {% block extra_styles %}
+
+<script src="{{ url_for(\'static\', filename=\'js/run.js\') }}"></script>{% endblock %}
 
 {% block content %}
 <div class="card">

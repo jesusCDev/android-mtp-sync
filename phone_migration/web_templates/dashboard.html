@@ -4,6 +4,8 @@
 <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard.css') }}">
     {% block extra_styles %}{% endblock %}
 
+<script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
+
 {% block content %}
 <div class="card">
     <h2><i class="fas fa-mobile-alt"></i> Device Status</h2>
@@ -105,4 +107,4 @@
 <div id="alert-container"></div>
 {% endblock %}
 
-    {% block extra_scripts %}{% endblock %}
+{% block extra_scripts %}{% endblock %}
