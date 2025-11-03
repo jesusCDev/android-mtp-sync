@@ -1,8 +1,295 @@
 {% extends "base.html" %}
 {% block title %}Profiles - Phone Migration Tool{% endblock %}
+
+{% block extra_styles %}
+<style>
+    .profile-grid {
+        display: grid;
+        gap: 16px;
+        margin-top: 20px;
+    }
+    
+    .profile-card {
+        background: linear-gradient(180deg, #131721 0%, #0F1217 100%);
+        border: 1px solid var(--border-subtle);
+        border-radius: var(--radius-card);
+        padding: 24px;
+        transition: all 170ms var(--easing);
+    }
+    
+    .profile-card:hover {
+        border-color: var(--border-strong);
+        transform: translateY(-0.5px);
+    }
+    
+    .profile-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 16px;
+    }
+    
+    .profile-name {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        font-size: 18px;
+        font-weight: 600;
+        color: var(--text);
+    }
+    
+    .profile-info {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 16px;
+        margin-top: 16px;
+        padding-top: 16px;
+        border-top: 1px solid var(--border-subtle);
+    }
+    
+    .info-item {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+    }
+    
+    .info-label {
+        font-size: 12px;
+        color: var(--text-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+    
+    .info-value {
+        font-size: 14px;
+        color: var(--text);
+        font-weight: 500;
+    }
+    
+    .device-status {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 4px 10px;
+        border-radius: var(--radius-pill);
+        font-size: 12px;
+        font-weight: 600;
+    }
+    
+    .device-status.connected {
+        background: rgba(34,197,94,0.15);
+        color: var(--success);
+    }
+    
+    .device-status.disconnected {
+        background: rgba(148,163,184,0.15);
+        color: var(--text-muted);
+    }
+</style>
+{% endblock %}
+
 {% block content %}
 <div class="card">
-    <h2><i class="fas fa-user-circle"></i> Profiles</h2>
-    <p style="color: #94a3b8;">Profile management page - Coming soon!</p>
+    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px;">
+        <h2><i class="fas fa-mobile-alt"></i> Device Profiles</h2>
+    </div>
+    
+    <div id="profiles-container" class="profile-grid">
+        <div style="text-align: center; padding: 40px; color: var(--text-muted);">
+            <i class="fas fa-spinner fa-spin" style="font-size: 24px;"></i>
+            <div style="margin-top: 12px;">Loading profiles...</div>
+        </div>
+    </div>
 </div>
+
+<!-- Add Profile Modal -->
+<div id="add-modal" class="modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h2><i class="fas fa-plus"></i> Add Device Profile</h2>
+            <button class="btn-close" onclick="closeModal()">
+                <i class="fas fa-times"></i>
+            </button>
+        </div>
+        
+        <div class="form-group">
+            <label>Profile Name</label>
+            <input type="text" id="profile-name" class="form-control" placeholder="e.g., my-phone" />
+            <small style="color: var(--text-muted); font-size: 12px; margin-top: 4px; display: block;">
+                A unique name for this device profile
+            </small>
+        </div>
+        
+        <div class="form-group">
+            <label>Connected Device</label>
+            <select id="device-select" class="form-control">
+                <option value="">Loading devices...</option>
+            </select>
+            <small style="color: var(--text-muted); font-size: 12px; margin-top: 4px; display: block;">
+                Make sure your device is connected via USB
+            </small>
+        </div>
+        
+        <div class="modal-footer">
+            <button class="btn btn-secondary" onclick="closeModal()">
+                <i class="fas fa-times"></i> Cancel
+            </button>
+            <button class="btn btn-success" onclick="saveProfile()">
+                <i class="fas fa-check"></i> Add Profile
+            </button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+    let devices = [];
+    
+    async function loadProfiles() {
+        try {
+            const profiles = await apiGet('/api/profiles');
+            displayProfiles(profiles);
+        } catch (error) {
+            showAlert('Failed to load profiles: ' + error.message, 'error');
+        }
+    }
+    
+    function displayProfiles(profiles) {
+        const container = document.getElementById('profiles-container');
+        
+        if (profiles.length === 0) {
+            container.innerHTML = `
+                <div class="empty-state">
+                    <i class="fas fa-mobile-alt" style="font-size: 48px; color: var(--icon-idle); margin-bottom: 16px;"></i>
+                    <h3>No Device Profiles</h3>
+                    <p>Connect your device via USB and add a profile to get started</p>
+                    <button class="btn btn-success" onclick="openAddModal()" style="margin-top: 16px;">
+                        <i class="fas fa-plus"></i> Register Connected Device
+                    </button>
+                </div>
+            `;
+            return;
+        }
+        
+        container.innerHTML = profiles.map(profile => `
+            <div class="profile-card">
+                <div class="profile-header">
+                    <div class="profile-name">
+                        <i class="fas fa-mobile-alt" style="color: var(--accent); font-size: 24px;"></i>
+                        <span>${profile.profile_name}</span>
+                    </div>
+                    <div style="display: flex; gap: 8px;">
+                        <button class="btn btn-danger btn-sm" onclick="deleteProfile('${profile.profile_name}')">
+                            <i class="fas fa-trash"></i> Delete
+                        </button>
+                    </div>
+                </div>
+                
+                <div class="profile-info">
+                    <div class="info-item">
+                        <div class="info-label">Device Name</div>
+                        <div class="info-value">${profile.device_name}</div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-label">MTP ID</div>
+                        <div class="info-value" style="font-family: monospace; font-size: 12px;">${profile.mtp_id}</div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-label">Rules</div>
+                        <div class="info-value">${profile.rules_count || 0} rule(s)</div>
+                    </div>
+                </div>
+            </div>
+        `).join('');
+    }
+    
+    async function openAddModal() {
+        document.getElementById('add-modal').style.display = 'flex';
+        document.getElementById('profile-name').value = '';
+        document.getElementById('device-select').innerHTML = '<option value="">Loading devices...</option>';
+        
+        // Load connected devices
+        try {
+            devices = await apiGet('/api/device/detect');
+            const select = document.getElementById('device-select');
+            
+            if (devices.length === 0) {
+                select.innerHTML = '<option value="">No devices found - please connect your device</option>';
+            } else {
+                select.innerHTML = devices.map((device, idx) => 
+                    `<option value="${idx}">${device.device_name} (${device.mtp_id})</option>`
+                ).join('');
+            }
+        } catch (error) {
+            showAlert('Failed to detect devices: ' + error.message, 'error');
+        }
+    }
+    
+    function closeModal() {
+        document.getElementById('add-modal').style.display = 'none';
+    }
+    
+    async function saveProfile() {
+        const profileName = document.getElementById('profile-name').value.trim();
+        const deviceIdx = parseInt(document.getElementById('device-select').value);
+        
+        if (!profileName) {
+            showAlert('Please enter a profile name', 'error');
+            return;
+        }
+        
+        if (isNaN(deviceIdx) || !devices[deviceIdx]) {
+            showAlert('Please select a device', 'error');
+            return;
+        }
+        
+        const device = devices[deviceIdx];
+        
+        try {
+            await apiPost('/api/device/register', {
+                profile_name: profileName,
+                device_name: device.device_name,
+                mtp_id: device.mtp_id
+            });
+            
+            showAlert('Profile added successfully!', 'success');
+            closeModal();
+            loadProfiles();
+        } catch (error) {
+            showAlert('Failed to add profile: ' + error.message, 'error');
+        }
+    }
+    
+    async function deleteProfile(profileName) {
+        if (!confirm(`Are you sure you want to delete profile "${profileName}"?\n\nThis will also delete all rules associated with this profile.`)) {
+            return;
+        }
+        
+        try {
+            await apiDelete(`/api/profiles/${profileName}`);
+            showAlert('Profile deleted successfully', 'success');
+            loadProfiles();
+        } catch (error) {
+            showAlert('Failed to delete profile: ' + error.message, 'error');
+        }
+    }
+    
+    // Modal keyboard shortcuts
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+            closeModal();
+        }
+    });
+    
+    // Close modal on backdrop click
+    document.getElementById('add-modal').addEventListener('click', (e) => {
+        if (e.target.id === 'add-modal') {
+            closeModal();
+        }
+    });
+    
+    // Initial load
+    loadProfiles();
+</script>
 {% endblock %}

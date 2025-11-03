@@ -65,7 +65,7 @@ def detect_connected_device(config: Dict[str, Any], verbose: bool = False) -> Op
     return None
 
 
-def run_for_connected_device(config: Dict[str, Any], verbose: bool = False, dry_run: bool = False, rule_ids: Optional[list] = None, notify: bool = False) -> None:
+def run_for_connected_device(config: Dict[str, Any], verbose: bool = False, dry_run: bool = False, rule_ids: Optional[list] = None, notify: bool = False, include_manual: bool = False) -> None:
     """
     Detect connected device and run configured rules.
     
@@ -75,6 +75,7 @@ def run_for_connected_device(config: Dict[str, Any], verbose: bool = False, dry_
         dry_run: Print actions without executing
         rule_ids: Optional list of specific rule IDs to run (ignores manual_only flag)
         notify: Send desktop notifications on completion
+        include_manual: Include manual-only rules in execution
     """
     # Print program header
     print(f"\n{Colors.BOLD}{Colors.BRIGHT_WHITE}{'='*60}{Colors.RESET}")
@@ -122,7 +123,7 @@ def run_for_connected_device(config: Dict[str, Any], verbose: bool = False, dry_
         print(f"  {Colors.CYAN}phone-sync --sync -p {profile_name} -dp ~/Videos/motiv -pp /Videos/motiv{Colors.RESET}")
         return
     
-    # Filter rules based on rule_ids or manual_only flag
+    # Filter rules based on rule_ids, include_manual flag, or manual_only flag
     if rule_ids:
         # Run specific rules by ID (ignore manual_only)
         rules = [r for r in all_rules if r.get("id") in rule_ids]
@@ -130,6 +131,18 @@ def run_for_connected_device(config: Dict[str, Any], verbose: bool = False, dry_
             print(f"{Colors.RED}Error: No rules found with specified IDs: {', '.join(rule_ids)}{Colors.RESET}")
             return
         print(f"{Colors.BOLD}Executing {len(rules)} specified rule(s)...{Colors.RESET}\n")
+    elif include_manual:
+        # Run only manual rules
+        rules = [r for r in all_rules if r.get("manual_only", False)]
+        auto_count = len(all_rules) - len(rules)
+        if not rules:
+            print(f"{Colors.YELLOW}No manual rules configured{Colors.RESET}")
+            return
+        print(f"{Colors.BOLD}Executing {len(rules)} manual rule(s)...", end="")
+        if auto_count > 0:
+            print(f" {Colors.DIM}({auto_count} auto rule(s) skipped){Colors.RESET}")
+        else:
+            print(f"{Colors.RESET}\n")
     else:
         # Run only non-manual rules
         rules = [r for r in all_rules if not r.get("manual_only", False)]

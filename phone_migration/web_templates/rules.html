@@ -167,13 +167,9 @@
         <button class="btn btn-success" onclick="openAddModal()"><i class="fas fa-plus"></i> Add Rule</button>
     </div>
     
-    <div id="profile-selector" style="margin-bottom: 20px;">
-        <div class="form-group">
-            <label for="profile-select">Profile</label>
-            <select id="profile-select" onchange="loadRules()">
-                <option value="">Select a profile...</option>
-            </select>
-        </div>
+    <div id="profile-info" style="margin-bottom: 20px; padding: 12px 16px; background: rgba(0,0,0,0.2); border: 1px solid var(--border-subtle); border-radius: var(--radius-card); display: none;">
+        <div style="font-size: 13px; color: var(--text-muted); margin-bottom: 4px;">Current Device</div>
+        <div id="current-profile" style="font-weight: 600; color: var(--text); font-size: 16px;"></div>
     </div>
     
     <div id="rules-container">
@@ -236,35 +232,34 @@
     
     async function loadProfiles() {
         try {
-            const data = await apiGet('/api/profiles');
-            profiles = data.profiles;
+            // Get current device status
+            const status = await apiGet('/api/status');
             
-            const select = document.getElementById('profile-select');
-            select.innerHTML = '<option value="">Select a profile...</option>';
-            
-            profiles.forEach(profile => {
-                const option = document.createElement('option');
-                option.value = profile.name;
-                option.textContent = `${profile.name} (${profile.rules?.length || 0} rules)`;
-                select.appendChild(option);
-            });
-            
-            // Auto-select first profile
-            if (profiles.length > 0) {
-                select.value = profiles[0].name;
-                loadRules();
+            if (!status.connected) {
+                document.getElementById('rules-container').innerHTML = `
+                    <div class="empty-state">
+                        <i class="fas fa-mobile-alt" style="font-size: 48px; color: var(--icon-idle); margin-bottom: 16px;"></i>
+                        <h3>No Device Connected</h3>
+                        <p>Please connect your device to manage rules</p>
+                    </div>
+                `;
+                return;
             }
+            
+            // Show current profile info
+            document.getElementById('profile-info').style.display = 'block';
+            document.getElementById('current-profile').textContent = `${status.device_name} (${status.profile_name})`;
+            
+            // Load rules for connected device's profile
+            currentProfile = status.profile_name;
+            loadRules();
         } catch (error) {
-            showAlert('Failed to load profiles: ' + error.message, 'danger');
+            showAlert('Failed to load status: ' + error.message, 'danger');
         }
     }
     
     async function loadRules() {
-        const select = document.getElementById('profile-select');
-        currentProfile = select.value;
-        
         if (!currentProfile) {
-            document.getElementById('rules-container').innerHTML = '<div class="empty-state"><i class="fas fa-inbox"></i><p>Select a profile to view rules</p></div>';
             return;
         }
         
