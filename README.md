@@ -495,7 +495,7 @@ ls -la ~/Videos/phone_images
 
 ## Future Enhancements
 
-See `TODO.md` for planned features including:
+See `docs/TODO.md` for planned features including:
 - Auto-run on device connect (systemd/udev)
 - Progress bars for large transfers
 - Hash-based duplicate detection

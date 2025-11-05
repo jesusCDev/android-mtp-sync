@@ -126,7 +126,7 @@ systemctl --user restart gvfs-daemon
 
 - Read `README.md` for detailed documentation
 - Check `warp.md` for Warp terminal integration
-- See `TODO.md` for upcoming features
+- See `docs/TODO.md` for upcoming features
 
 ## Your First Sync Workflow
 
