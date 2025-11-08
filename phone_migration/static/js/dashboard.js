@@ -656,6 +656,7 @@ let deviceStatus = null;
         };
         
         let hasSyncDetails = false;
+        let smartCopyFiles = [];
         
         for (let line of logLines) {
             // Keep original line for checking, but also trim for parsing
@@ -675,6 +676,17 @@ let deviceStatus = null;
             // Parse sync summary info
             if (trimmed.match(/^✓\s+Synced:|^⊙\s+Skipped:|Cleaned:/)) {
                 operations['Sync Summary'].push({ details: trimmed });
+                continue;
+            }
+            
+            // Parse Smart Copy progress lines: [NNN/MMM - X.X%] filename
+            const smartCopyMatch = trimmed.match(/^\[(\d+)\/(\d+)\s*-\s*[\d.]+%\]\s+(.+)$/);
+            if (smartCopyMatch) {
+                const filename = smartCopyMatch[3];
+                if (filename && !smartCopyFiles.includes(filename)) {
+                    smartCopyFiles.push(filename);
+                    operations['Files Copying'].push({ source: filename, dest: '✓' });
+                }
                 continue;
             }
             
