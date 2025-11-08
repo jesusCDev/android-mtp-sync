@@ -179,8 +179,8 @@ def api_add_rule():
             cfg.add_move_rule(config, profile_name, phone_path, desktop_path, manual_only)
         elif mode == "copy":
             cfg.add_copy_rule(config, profile_name, phone_path, desktop_path, manual_only)
-        elif mode == "smart_copy":
-            cfg.add_smart_copy_rule(config, profile_name, phone_path, desktop_path, manual_only)
+        elif mode in ["backup", "smart_copy"]:
+            cfg.add_backup_rule(config, profile_name, phone_path, desktop_path, manual_only)
         elif mode == "sync":
             cfg.add_sync_rule(config, profile_name, desktop_path, phone_path, manual_only)
         else:

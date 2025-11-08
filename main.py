@@ -91,8 +91,10 @@ Automate file transfers between Android phone (MTP) and Linux desktop.
                    help="📤 Add move rule (phone → desktop, delete from phone)")
     g.add_argument("--copy", action="store_true",
                    help="📋 Add copy rule (phone → desktop, keep on phone)")
+    g.add_argument("--backup", action="store_true",
+                   help="💾 Add backup rule (resumable copy, no deletions)")
     g.add_argument("--smart-copy", action="store_true",
-                   help="💡 Add smart copy rule (resumable, tracks progress)")
+                   help="(Deprecated: use --backup) Smart copy rule (resumable, tracks progress)")
     g.add_argument("--sync", action="store_true",
                    help="🔄 Add sync rule (desktop → phone, mirror)")
     g.add_argument("--remove-rule", action="store_true",
@@ -138,7 +140,7 @@ Automate file transfers between Android phone (MTP) and Linux desktop.
                            help="Path on desktop (e.g., ~/Pictures)")
     rule_opts.add_argument("-i", "--id", metavar="ID",
                            help="Rule ID (for --remove-rule, --edit-rule)")
-    rule_opts.add_argument("-m", "--mode", choices=["move", "copy", "smart_copy", "sync"],
+    rule_opts.add_argument("-m", "--mode", choices=["move", "copy", "backup", "smart_copy", "sync"],
                            help="Rule mode (for --edit-rule)")
     rule_opts.add_argument("--manual", action="store_true",
                            help="Mark rule as manual-only (for --move, --copy, --sync)")
@@ -284,16 +286,28 @@ def main():
             print(f"✓ Copy rule added to profile '{args.profile}'{manual_suffix}")
             return 0
         
+        if args.backup:
+            if not all([args.profile, args.phone_path, args.desktop_path]):
+                print("Error: --profile, --phone-path, and --desktop-path are required for --backup", 
+                      file=sys.stderr)
+                return 1
+            cfg.add_backup_rule(config, args.profile, args.phone_path, args.desktop_path, manual_only=args.manual)
+            cfg.save_config(config)
+            manual_suffix = " [MANUAL]" if args.manual else ""
+            print(f"✓ Backup rule added to profile '{args.profile}'{manual_suffix}")
+            print(f"  💾 Resumable backup with progress tracking (no deletions)")
+            return 0
+        
         if args.smart_copy:
             if not all([args.profile, args.phone_path, args.desktop_path]):
                 print("Error: --profile, --phone-path, and --desktop-path are required for --smart-copy", 
                       file=sys.stderr)
                 return 1
-            cfg.add_smart_copy_rule(config, args.profile, args.phone_path, args.desktop_path, manual_only=args.manual)
+            cfg.add_backup_rule(config, args.profile, args.phone_path, args.desktop_path, manual_only=args.manual)
             cfg.save_config(config)
             manual_suffix = " [MANUAL]" if args.manual else ""
-            print(f"✓ Smart copy rule added to profile '{args.profile}'{manual_suffix}")
-            print(f"  💡 Resumable copy with progress tracking")
+            print(f"✓ Backup rule added to profile '{args.profile}'{manual_suffix}")
+            print(f"  💾 Resumable backup with progress tracking (no deletions)")
             return 0
         
         if args.sync:

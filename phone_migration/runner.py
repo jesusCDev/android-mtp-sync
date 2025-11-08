@@ -229,8 +229,10 @@ def run_for_connected_device(config: Dict[str, Any], verbose: bool = False, dry_
                 total_stats["backed_up"] += stats.get("copied", 0)  # Backed up = files copied without deletion
                 total_stats["folders"] += stats.get("folders", 0)
             
-            elif mode == "smart_copy":
-                stats = operations.run_smart_copy_rule(rule, device_info, verbose, transfer_tracker, rename_duplicates=rename_duplicates)
+            elif mode in ["backup", "smart_copy"]:
+                # Use backup function (smart_copy is legacy name)
+                func = operations.run_backup_rule if hasattr(operations, 'run_backup_rule') else operations.run_smart_copy_rule
+                stats = func(rule, device_info, verbose, transfer_tracker, rename_duplicates=False)  # Backup defaults to False for conflicts
                 total_stats["copied"] += stats.get("copied", 0)
                 total_stats["errors"] += stats.get("errors", 0)
                 total_stats["skipped"] += stats.get("skipped", 0)

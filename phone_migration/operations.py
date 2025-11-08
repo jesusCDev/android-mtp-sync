@@ -164,15 +164,16 @@ def _process_copy_directory(source_uri: str, dest_dir: Path,
                 stats["errors"] += 1
 
 
-def run_smart_copy_rule(rule: Dict[str, Any], device: Dict[str, Any], verbose: bool = False, transfer_tracker=None, rename_duplicates: bool = True) -> Dict[str, int]:
+def run_backup_rule(rule: Dict[str, Any], device: Dict[str, Any], verbose: bool = False, transfer_tracker=None, rename_duplicates: bool = False) -> Dict[str, int]:
     """
-    Execute a smart copy rule: resumable copy with progress tracking.
+    Execute a backup rule: resumable copy with progress tracking.
     
     Args:
         rule: Rule dictionary with phone_path, desktop_path, id
         device: Device dictionary with activation_uri
         verbose: Print verbose output
         transfer_tracker: Optional TransferStats instance for tracking
+        rename_duplicates: Default False for backup (do nothing on conflicts)
     
     Returns:
         Dictionary with counts: copied, resumed, skipped, failed, errors
@@ -186,7 +187,7 @@ def run_smart_copy_rule(rule: Dict[str, Any], device: Dict[str, Any], verbose: b
     source_uri = paths.build_phone_uri(activation_uri, phone_path)
     dest_dir = paths.expand_desktop(desktop_path_str)
     
-    print(f"\n{Colors.BOLD}{Colors.BRIGHT_YELLOW}💡 Smart Copy:{Colors.RESET} {Colors.CYAN}{phone_path}{Colors.RESET} {Colors.DIM}→{Colors.RESET} {Colors.GREEN}{shorten_path(dest_dir)}{Colors.RESET}")
+    print(f"\n{Colors.BOLD}{Colors.BRIGHT_YELLOW}💾 Backup:{Colors.RESET} {Colors.CYAN}{phone_path}{Colors.RESET} {Colors.DIM}→{Colors.RESET} {Colors.GREEN}{shorten_path(dest_dir)}{Colors.RESET}")
     
     # Create destination directory
     paths.ensure_dir(dest_dir)
@@ -312,6 +313,14 @@ def run_smart_copy_rule(rule: Dict[str, Any], device: Dict[str, Any], verbose: b
         print(f"  {Colors.RED}✕ Failed:{Colors.RESET}   {stats['failed']} files")
     
     return stats
+
+
+def run_smart_copy_rule(rule: Dict[str, Any], device: Dict[str, Any], verbose: bool = False, transfer_tracker=None, rename_duplicates: bool = True) -> Dict[str, int]:
+    """
+    Deprecated: Use run_backup_rule instead.
+    Execute a smart copy rule: resumable copy with progress tracking.
+    """
+    return run_backup_rule(rule, device, verbose, transfer_tracker, rename_duplicates=False)
 
 
 def _build_file_list(source_uri: str, rel_path: str, file_list: list) -> None:
