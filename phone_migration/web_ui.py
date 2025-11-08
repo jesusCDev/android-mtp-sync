@@ -98,6 +98,12 @@ def history():
     return render_template('history.html')
 
 
+@app.route('/documentation')
+def documentation():
+    """Documentation page."""
+    return render_template('documentation.html')
+
+
 # === API Routes ===
 
 @app.route('/api/status')
