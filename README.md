@@ -328,7 +328,7 @@ Open your browser to: **http://127.0.0.1:8080**
 - Edit or delete existing rules
 - See all rules for your connected device
 
-#### 4. Run Page
+#### 4. Dashboard - Run Operations (Enhanced)
 - Execute configured rules with real-time progress
 - See which files are being transferred
 - View operation statistics
@@ -337,6 +337,15 @@ Open your browser to: **http://127.0.0.1:8080**
   - **Enabled** (default): Rename duplicates as `filename (1).ext`, `filename (2).ext`, etc.
   - **Disabled**: Skip files that already exist without renaming them
   - Affects all operation types: move, copy, smart copy, and sync
+- **Command Preview**: Displays the exact command that will execute with color-coded syntax
+- **Operation Details Modal**: Click "Expand" on any operation card to:
+  - View the formatted command in **Command View** tab
+  - See detailed file listings in **Detail View** tab showing:
+    - Files being copied (with source and destination)
+    - Files being deleted
+    - Files being skipped
+    - Folders being created
+  - Modal displays full-screen with close button and Escape key support
 
 #### 5. History Page
 - **Persistent Storage**: History is now saved to `~/.config/phone-migration/history.json`
@@ -500,6 +509,27 @@ ls -la ~/Videos/phone_images
 - **Test first**: Try with a small test folder before bulk operations
 - **Verification**: Move operations verify file size before deletion
 - **No root**: Tool runs as regular user, no root access needed
+
+## UI Design
+
+### Color Palette
+The web UI uses a soft pastel color scheme designed to be easy on the eyes during extended use:
+- **Accent (Lavender)**: `#C8A2E0` - Primary interactive elements
+- **Info (Sky Blue)**: `#9DD4FF` - Information and status updates
+- **Success (Mint Green)**: `#8FD6B5` - Successful operations
+- **Warning (Peachy-Gold)**: `#FFD699` - Warnings and cautions
+- **Danger (Coral Red)**: `#FF9898` - Errors and destructive actions
+
+### Operation Details
+Each operation card includes an "Expand" button that opens a detailed modal showing:
+1. **Command View**: The exact command being executed with syntax highlighting
+   - Color-coded flags and parameters
+   - Execute mode vs. dry-run indicators
+2. **Detail View**: File-level breakdown by category
+   - Individual files being copied/moved
+   - Files marked for deletion
+   - Files being skipped
+   - Folders being created
 
 ## Future Enhancements
 

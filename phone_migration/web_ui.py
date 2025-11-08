@@ -20,6 +20,18 @@ CORS(app)  # Enable CORS for API requests
 
 # Disable aggressive caching during development
 app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0
+app.config['TEMPLATES_AUTO_RELOAD'] = True
+app.config['CACHE_TYPE'] = 'null'
+
+# Disable Flask's caching for templates
+@app.after_request
+def add_no_cache_headers(response):
+    response.cache_control.no_cache = True
+    response.cache_control.no_store = True
+    response.cache_control.must_revalidate = True
+    response.headers['Pragma'] = 'no-cache'
+    response.headers['Expires'] = '0'
+    return response
 
 # Global state
 current_run_status = {
@@ -78,12 +90,6 @@ def profiles():
 def rules():
     """Rules management page."""
     return render_template('rules.html')
-
-
-@app.route('/run')
-def run_page():
-    """Run operations page."""
-    return render_template('run.html')
 
 
 @app.route('/history')
@@ -242,10 +248,10 @@ def api_run():
                 else:
                     rules_count = len(all_rules)
             
-            # Run with captured output
+            # Run with captured output (verbose=True for detailed file info in web UI)
             runner.run_for_connected_device(
                 config, 
-                verbose=False, 
+                verbose=True, 
                 dry_run=dry_run, 
                 rule_ids=rule_ids,
                 notify=notify,

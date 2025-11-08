@@ -87,6 +87,73 @@ let deviceStatus = null;
         }
     }
     
+    function buildCommandPreview(isDryRun, selectedRules = []) {
+        let html = '<div class="command-preview">';
+        
+        // Build command parts
+        const parts = ['phone-sync', '--run'];
+        if (isDryRun) {
+            parts.push('--dry-run');
+        } else {
+            parts.push('-y');
+        }
+        
+        if (options.notify) {
+            parts.push('--notify');
+        }
+        
+        // Add to HTML
+        html += '<div class="command-line">';
+        html += `<span class="command-prompt">$</span>`;
+        html += '<span class="command-text">';
+        
+        for (let i = 0; i < parts.length; i++) {
+            if (i > 0) html += ' ';
+            
+            if (parts[i] === '--dry-run') {
+                html += `<span class="command-dry-run">${parts[i]}</span>`;
+            } else if (parts[i].startsWith('-')) {
+                html += `<span class="command-flag">${parts[i]}</span>`;
+            } else if (i === 0 || parts[i - 1].startsWith('-')) {
+                html += `<span class="command-text">${parts[i]}</span>`;
+            } else {
+                html += parts[i];
+            }
+        }
+        
+        html += '</span></div>';
+        
+        // Add selected rules if manual
+        if (selectedRules.length > 0) {
+            html += '<div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid rgba(255,255,255,0.1);">';
+            html += '<div style="font-size: 12px; color: var(--text-muted); margin-bottom: 8px;"><i class="fas fa-check"></i> Selected Rules:</div>';
+            selectedRules.forEach(id => {
+                html += `<div style="font-size: 13px; color: var(--text); font-family: monospace; margin-left: 16px;">- ${id}</div>`;
+            });
+            html += '</div>';
+        }
+        
+        // Add warning if not dry run
+        if (!isDryRun) {
+            html += `
+                <div class="command-warning">
+                    <i class="fas fa-exclamation-triangle command-warning-icon"></i>
+                    <span style="color: var(--warning);"><strong>⚡ This will EXECUTE operations.</strong> Files will be moved, copied, or synced.</span>
+                </div>
+            `;
+        } else {
+            html += `
+                <div style="background: rgba(96, 165, 250, 0.1); border: 1px solid rgba(96, 165, 250, 0.3); border-radius: var(--radius-card); padding: 12px; margin-top: 12px; font-size: 13px;">
+                    <i class="fas fa-eye" style="color: var(--info); margin-right: 8px;"></i>
+                    <span style="color: var(--info);"><strong>👁️ Preview mode.</strong> No files will be modified.</span>
+                </div>
+            `;
+        }
+        
+        html += '</div>';
+        return html;
+    }
+    
     async function startRun() {
         if (!deviceStatus || !deviceStatus.connected) {
             showAlert('Please connect your phone first', 'danger');
@@ -110,6 +177,11 @@ let deviceStatus = null;
         document.getElementById('stat-deleted').textContent = '0';
         document.getElementById('stat-errors').textContent = '0';
         document.getElementById('smart-copy-progress').style.display = 'none';
+        
+        // Show command preview
+        document.getElementById('command-preview-card').style.display = 'block';
+        const previewContent = document.getElementById('command-preview-content');
+        previewContent.innerHTML = buildCommandPreview(options.dry_run);
         
         updateRunStatus('running', 'Running auto rules...');
         document.getElementById('manual-selection-card').style.display = 'none';
@@ -209,12 +281,16 @@ let deviceStatus = null;
         }
     }
     
+    let currentOperationLogs = [];
+    
     function parseAndDisplayOperations(logs) {
+        currentOperationLogs = logs; // Store for detail view
         const container = document.getElementById('operations-container');
         const fullLog = logs.join('\n');
         const isDryRun = fullLog.includes('[DRY RUN MODE');
         const lines = fullLog.split('\n');
         let currentOp = null;
+        let operationLog = []; // Collect lines for current operation
         
         for (let line of lines) {
             line = line.trim();
@@ -222,18 +298,26 @@ let deviceStatus = null;
             
             const opMatch = line.match(/^[\p{Emoji}\u2192🔄-]*\s*(Move|Copy|Smart Copy|Sync):\s*(.+?)\s*[→\->=>]+\s*(.+)$/u);
             if (opMatch) {
-                if (currentOp) displayOperation(container, currentOp, isDryRun);
+                if (currentOp) {
+                    currentOp.logLines = operationLog; // Store logs for this operation
+                    displayOperation(container, currentOp, isDryRun);
+                }
                 const [_, mode, source, dest] = opMatch;
                 currentOp = {
                     mode: mode.trim(),
                     source: source.trim(),
                     dest: dest.trim(),
-                    stats: {}
+                    stats: {},
+                    logLines: []
                 };
+                operationLog = []; // Reset for new operation
                 continue;
             }
             
             if (currentOp) {
+                // Store all lines for this operation
+                operationLog.push(line);
+                
                 // Existing stats matching
                 const copiedMatch = line.match(/Copied:\s*(\d+)/);
                 const skippedMatch = line.match(/Skipped:\s*(\d+)/);
@@ -263,7 +347,10 @@ let deviceStatus = null;
             }
         }
         
-        if (currentOp) displayOperation(container, currentOp, isDryRun);
+        if (currentOp) {
+            currentOp.logLines = operationLog;
+            displayOperation(container, currentOp, isDryRun);
+        }
         
         if (container.children.length === 0 && fullLog.includes('No changes needed')) {
             container.innerHTML = `
@@ -282,6 +369,7 @@ let deviceStatus = null;
         displayedOperations.add(opKey);
         
         const modeClass = op.mode.toLowerCase().replace(' ', '_');
+        const opId = `op-${displayedOperations.size}`;
         let statsHtml = '';
         if (op.stats.copied > 0) statsHtml += `<div style="display: flex; align-items: center; gap: 6px;"><i class="fas fa-check" style="color: var(--success);"></i> <span>${op.stats.copied} copied</span></div>`;
         if (op.stats.skipped > 0) statsHtml += `<div style="display: flex; align-items: center; gap: 6px;"><i class="fas fa-forward" style="color: var(--text-muted);"></i> <span>${op.stats.skipped} skipped</span></div>`;
@@ -312,12 +400,20 @@ let deviceStatus = null;
         
         const opCard = document.createElement('div');
         opCard.className = 'operation-card';
+        opCard.setAttribute('data-op-id', opId);
+        opCard.setAttribute('data-op-data', JSON.stringify(op));
+        opCard.setAttribute('data-op-log', JSON.stringify(op.logLines || []));
         opCard.innerHTML = `
             <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
                 <span class="operation-mode ${modeClass}">
                     <i class="fas fa-arrow-right"></i> ${op.mode}
                 </span>
-                ${isDryRun ? '<span style="background: rgba(245,158,11,0.15); color: var(--warning); padding: 4px 10px; border-radius: 12px; font-size: 11px; font-weight: 600;"><i class="fas fa-eye"></i> DRY RUN</span>' : ''}
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <button class="btn btn-secondary btn-sm" onclick="toggleOperationDetails('${opId}')" style="cursor: pointer;">
+                        <i class="fas fa-expand-alt"></i> Expand
+                    </button>
+                    ${isDryRun ? '<span style="background: rgba(245,158,11,0.15); color: var(--warning); padding: 4px 10px; border-radius: 12px; font-size: 11px; font-weight: 600;"><i class="fas fa-eye"></i> DRY RUN</span>' : ''}
+                </div>
             </div>
             <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px; font-size: 13px; color: var(--text-muted);">
                 <i class="fas fa-mobile-alt"></i> ${op.source} <i class="fas fa-arrow-right"></i> <i class="fas fa-desktop"></i> ${op.dest}
@@ -426,6 +522,11 @@ let deviceStatus = null;
         document.getElementById('stat-errors').textContent = '0';
         document.getElementById('smart-copy-progress').style.display = 'none';
         
+        // Show command preview
+        document.getElementById('command-preview-card').style.display = 'block';
+        const previewContent = document.getElementById('command-preview-content');
+        previewContent.innerHTML = buildCommandPreview(options.dry_run, selectedRuleIds);
+        
         // Run with specific rule IDs
         isRunning = true;
         const runBtn = document.getElementById('run-btn');
@@ -476,7 +577,209 @@ let deviceStatus = null;
     // Auto-refresh every 5 seconds
     setInterval(loadDeviceStatus, 5000);
     
+    // Per-operation expand functions
+    let expandedModalId = null;
+    
+    function toggleOperationDetails(opId) {
+        const existingModal = document.getElementById('op-detail-modal');
+        if (existingModal) {
+            existingModal.remove();
+            if (expandedModalId === opId) {
+                expandedModalId = null;
+                return;
+            }
+        }
+        
+        expandedModalId = opId;
+        const opCard = document.querySelector(`[data-op-id="${opId}"]`);
+        if (!opCard) return;
+        
+        const opData = JSON.parse(opCard.getAttribute('data-op-data'));
+        const opLog = JSON.parse(opCard.getAttribute('data-op-log'));
+        
+        const modal = createOperationModal(opId, opData, opLog);
+        document.body.appendChild(modal);
+    }
+    
+    function createOperationModal(opId, opData, opLog) {
+        const modal = document.createElement('div');
+        modal.id = 'op-detail-modal';
+        modal.style.cssText = 'position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.8); z-index: 1001; overflow: auto; display: flex; align-items: center; justify-content: center;';
+        modal.onclick = (e) => {
+            if (e.target === modal) toggleOperationDetails(opId);
+        };
+        
+        const operations = parseOperationLog(opLog);
+        const detailsHtml = buildOperationDetails(operations);
+        
+        const modeClass = opData.mode.toLowerCase().replace(' ', '_');
+        
+        modal.innerHTML = `
+            <div style="position: relative; max-width: 900px; width: 90%; background: var(--surface); border-radius: var(--radius-card); padding: 24px; box-shadow: 0 20px 60px rgba(0,0,0,0.4);">
+                <button onclick="document.getElementById('op-detail-modal').onclick({target: document.getElementById('op-detail-modal')})" style="position: absolute; top: 20px; right: 20px; background: none; border: none; color: var(--text-muted); font-size: 24px; cursor: pointer; padding: 0; width: 24px; height: 24px;">
+                    <i class="fas fa-times"></i>
+                </button>
+                
+                <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 20px;">
+                    <span class="operation-mode ${modeClass}">
+                        <i class="fas fa-${getModeIcon(opData.mode)}"></i> ${opData.mode}
+                    </span>
+                    <span style="color: var(--text-muted); font-size: 13px;">
+                        <i class="fas fa-mobile-alt"></i> ${opData.source} <i class="fas fa-arrow-right"></i> <i class="fas fa-desktop"></i> ${opData.dest}
+                    </span>
+                </div>
+                
+                ${detailsHtml}
+            </div>
+        `;
+        
+        // Close with Escape
+        const handleEscape = (e) => {
+            if (e.key === 'Escape') {
+                modal.remove();
+                expandedModalId = null;
+                document.removeEventListener('keydown', handleEscape);
+            }
+        };
+        document.addEventListener('keydown', handleEscape);
+        
+        return modal;
+    }
+    
+    function parseOperationLog(logLines) {
+        const operations = {
+            'Files Copying': [],
+            'Folders': [],
+            'Files Deleting': [],
+            'Files Skipped': [],
+            'Sync Summary': []
+        };
+        
+        let hasSyncDetails = false;
+        
+        for (let line of logLines) {
+            // Keep original line for checking, but also trim for parsing
+            const trimmed = line.trim();
+            if (!trimmed) continue;
+            
+            // For sync operations, check if we have detailed file listing
+            if (trimmed.includes('⊙') && trimmed.includes('unchanged')) {
+                hasSyncDetails = true;
+            }
+            
+            // Skip most summary lines but not sync-specific ones
+            if (trimmed.match(/^✓\s+(Copied|Deleted|Renamed|Folders):|^×|^📊|^\[DRY/)) {
+                continue;
+            }
+            
+            // Parse sync summary info
+            if (trimmed.match(/^✓\s+Synced:|^⊙\s+Skipped:|Cleaned:/)) {
+                operations['Sync Summary'].push({ details: trimmed });
+                continue;
+            }
+            
+            // Parse folder/directory entries (📦 symbol)
+            if (trimmed.includes('📦')) {
+                const parts = trimmed.split(/→|->/);
+                if (parts.length === 2) {
+                    const folder = parts[0].replace('📦', '').trim();
+                    const dest = parts[1].trim();
+                    if (folder && dest) {
+                        operations['Folders'].push({ folder, dest });
+                    }
+                }
+            }
+            // Parse copied files (→ arrow with leading spaces/indentation)
+            else if (trimmed.match(/^→\s/) && trimmed.includes('→')) {
+                const parts = trimmed.replace(/^→\s+/, '').split(/→|->/);
+                if (parts.length === 2) {
+                    const source = parts[0].trim();
+                    const dest = parts[1].trim();
+                    if (source && dest) {
+                        operations['Files Copying'].push({ source, dest });
+                    }
+                }
+            }
+            // Parse deleted files (× symbol)
+            else if (trimmed.match(/^×\s/)) {
+                const file = trimmed.replace(/^×\s+/, '').trim();
+                if (file) {
+                    operations['Files Deleting'].push({ file });
+                }
+            }
+            // Parse skipped files (⊙ symbol) - sync operations show these for unchanged files
+            else if (trimmed.match(/^⊙\s/)) {
+                const file = trimmed.replace(/^⊙\s+/, '').replace(/\(unchanged\)/, '').trim();
+                if (file) {
+                    operations['Files Skipped'].push({ file });
+                }
+            }
+        }
+        
+        // If no detailed sync info was found, create a note about it
+        if (operations['Sync Summary'].length > 0 && !hasSyncDetails) {
+            operations['Sync Summary'].push({ 
+                details: 'Note: Sync operations only show summary in non-verbose mode. Individual file details are not available.' 
+            });
+        }
+        
+        return operations;
+    }
+    
+    function buildOperationDetails(operations) {
+        let html = '';
+        
+        for (const [category, items] of Object.entries(operations)) {
+            if (items.length === 0) continue;
+            
+            const icon = {
+                'Files Copying': 'fas fa-copy',
+                'Files Deleting': 'fas fa-trash',
+                'Files Skipped': 'fas fa-forward',
+                'Folders': 'fas fa-folder',
+                'Sync Summary': 'fas fa-info-circle'
+            }[category] || 'fas fa-file';
+            
+            html += `
+                <div style="background: rgba(0,0,0,0.2); border: 1px solid var(--border-subtle); border-radius: var(--radius-card); padding: 16px; margin-bottom: 16px;">
+                    <h4 style="margin: 0 0 12px 0; color: var(--text); display: flex; align-items: center; gap: 8px;">
+                        <i class="${icon}"></i> ${category} (${items.length})
+                    </h4>
+                    <div style="max-height: 400px; overflow-y: auto;">
+                        ${items.map(item => {
+                            if (item.folder && item.dest) {
+                                return `<div style="margin-bottom: 8px; padding: 8px; background: rgba(0,0,0,0.2); border-radius: 4px; font-size: 12px; font-family: monospace;">
+                                    <div style="color: var(--text-muted); margin-bottom: 2px;">📁 ${item.folder}/</div>
+                                    <div style="color: var(--success); display: flex; align-items: center; gap: 4px;"><i class="fas fa-arrow-right"></i> ${item.dest}</div>
+                                </div>`;
+                            } else if (item.source && item.dest) {
+                                return `<div style="margin-bottom: 8px; padding: 8px; background: rgba(0,0,0,0.2); border-radius: 4px; font-size: 12px; font-family: monospace;">
+                                    <div style="color: var(--text-muted); margin-bottom: 2px;">📄 ${item.source}</div>
+                                    <div style="color: var(--success); display: flex; align-items: center; gap: 4px;"><i class="fas fa-arrow-right"></i> ${item.dest}</div>
+                                </div>`;
+                            } else if (item.file) {
+                                return `<div style="margin-bottom: 4px; padding: 6px; background: rgba(0,0,0,0.2); border-radius: 4px; font-size: 12px; font-family: monospace;">${item.file}</div>`;
+                            } else if (item.details) {
+                                return `<div style="margin-bottom: 4px; padding: 6px; background: rgba(0,0,0,0.2); border-radius: 4px; font-size: 12px; color: var(--text);">${item.details}</div>`;
+                            }
+                            return '';
+                        }).join('')}
+                    </div>
+                </div>
+            `;
+        }
+        
+        return html || '<p style="color: var(--text-muted);">No file-level details available</p>';
+    }
+    
     // Cleanup
     window.addEventListener('beforeunload', () => {
         stopPolling();
+    });
+    
+    // Close modal with escape key
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && isResultsExpanded) {
+            toggleResultsExpanded();
+        }
     });
