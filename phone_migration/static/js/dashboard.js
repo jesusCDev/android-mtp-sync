@@ -658,6 +658,8 @@ let deviceStatus = null;
         let hasSyncDetails = false;
         let smartCopyFiles = [];
         
+        console.log('parseOperationLog: received', logLines.length, 'lines');
+        
         for (let line of logLines) {
             // Keep original line for checking, but also trim for parsing
             const trimmed = line.trim();
@@ -683,11 +685,15 @@ let deviceStatus = null;
             const smartCopyMatch = trimmed.match(/^\[(\d+)\/(\d+)\s*-\s*[\d.]+%\]\s+(.+)$/);
             if (smartCopyMatch) {
                 const filename = smartCopyMatch[3];
+                console.log('Smart Copy match found:', { current: smartCopyMatch[1], total: smartCopyMatch[2], filename });
                 if (filename && !smartCopyFiles.includes(filename)) {
                     smartCopyFiles.push(filename);
                     operations['Files Copying'].push({ source: filename, dest: '✓' });
+                    console.log('Added file:', filename);
                 }
                 continue;
+            } else if (trimmed.startsWith('[')) {
+                console.log('Line starts with [ but no match:', trimmed);
             }
             
             // Parse folder/directory entries (📦 symbol)
