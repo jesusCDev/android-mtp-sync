@@ -258,8 +258,9 @@ def run_smart_copy_rule(rule: Dict[str, Any], device: Dict[str, Any], verbose: b
         percent = (current_total / total_files) * 100
         
         if verbose or (i % 10 == 0):  # Show every 10th file or all in verbose
-            filename = file_parts[-1]
-            print(f"  {Colors.DIM}[{current_total}/{total_files} - {percent:.1f}%]{Colors.RESET} {filename}")
+            # Use full relative path for better file identification
+            display_path = rel_path
+            print(f"  {Colors.DIM}[{current_total}/{total_files} - {percent:.1f}%]{Colors.RESET} {display_path}")
         
         # Try to copy the file
         try:
