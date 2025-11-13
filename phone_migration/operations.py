@@ -31,7 +31,7 @@ def shorten_path(path_str: str) -> str:
     return path_str
 
 
-def run_copy_rule(rule: Dict[str, Any], device: Dict[str, Any], verbose: bool = False, transfer_tracker=None) -> Dict[str, int]:
+def run_copy_rule(rule: Dict[str, Any], device: Dict[str, Any], verbose: bool = False, transfer_tracker=None, rename_duplicates: bool = True) -> Dict[str, int]:
     """
     Execute a copy rule: copy from phone to desktop without deleting from phone.
 
@@ -58,10 +58,10 @@ def run_copy_rule(rule: Dict[str, Any], device: Dict[str, Any], verbose: bool = 
     paths.ensure_dir(dest_dir)
 
     # Track statistics
-    stats = {"copied": 0, "renamed": 0, "errors": 0, "folders": 0}
+    stats = {"copied": 0, "renamed": 0, "errors": 0, "skipped": 0, "folders": 0}
 
     # Recursively process phone directory (no deletion)
-    _process_copy_directory(source_uri, dest_dir, stats, verbose, transfer_tracker=transfer_tracker)
+    _process_copy_directory(source_uri, dest_dir, stats, verbose, transfer_tracker=transfer_tracker, rename_duplicates=rename_duplicates)
 
     # Align based on longest label "Renamed:" (8 chars including emoji/symbol)
     print(f"\n  {Colors.GREEN}✓ Copied:{Colors.RESET}   {stats['copied']} files")
@@ -69,6 +69,8 @@ def run_copy_rule(rule: Dict[str, Any], device: Dict[str, Any], verbose: bool = 
         print(f" {Colors.BRIGHT_WHITE}📁 Folders:{Colors.RESET}  {stats['folders']}")
     if stats["renamed"] > 0:
         print(f"  {Colors.YELLOW}↻ Renamed:{Colors.RESET}  {stats['renamed']} (duplicates)")
+    if stats["skipped"] > 0:
+        print(f"  {Colors.CYAN}⊙ Exists:{Colors.RESET}   {stats['skipped']} files")
     if stats["errors"] > 0:
         print(f"  {Colors.YELLOW}⨠ Errors:{Colors.RESET}   {stats['errors']}")
 
@@ -76,7 +78,7 @@ def run_copy_rule(rule: Dict[str, Any], device: Dict[str, Any], verbose: bool = 
 
 
 def _process_copy_directory(source_uri: str, dest_dir: Path, 
-                            stats: Dict[str, int], verbose: bool, in_subfolder: bool = False, transfer_tracker=None) -> None:
+                            stats: Dict[str, int], verbose: bool, in_subfolder: bool = False, transfer_tracker=None, rename_duplicates: bool = True) -> None:
     """Recursively process a directory for copy operation (no deletion).
 
     Args:
@@ -110,14 +112,21 @@ def _process_copy_directory(source_uri: str, dest_dir: Path,
 
             # Recurse into subdirectory (track file count, mark as in_subfolder)
             folder_stats_before = stats["copied"]
-            _process_copy_directory(entry_uri, sub_dest_dir, stats, verbose, in_subfolder=True, transfer_tracker=transfer_tracker)
+            _process_copy_directory(entry_uri, sub_dest_dir, stats, verbose, in_subfolder=True, transfer_tracker=transfer_tracker, rename_duplicates=rename_duplicates)
             files_in_folder = stats["copied"] - folder_stats_before
             if files_in_folder > 0 and not verbose:
                 print(f"     {Colors.DIM}({files_in_folder} files){Colors.RESET}")
 
         elif "regular" in entry_type.lower() or entry_type == "1":  # Type 1 is regular file
             # Determine destination file path
-            dest_file = paths.next_available_name(dest_dir, entry)
+            dest_file = paths.next_available_name(dest_dir, entry, rename_duplicates=rename_duplicates)
+            
+            # Skip file if conflict and rename_duplicates is False
+            if dest_file is None:
+                stats["skipped"] += 1
+                if verbose:
+                    print(f"  {Colors.DIM}Skipped (exists):{Colors.RESET} {entry}")
+                continue
 
             # Check if needs rename due to duplicate
             will_rename = dest_file.name != entry
@@ -155,15 +164,16 @@ def _process_copy_directory(source_uri: str, dest_dir: Path,
                 stats["errors"] += 1
 
 
-def run_smart_copy_rule(rule: Dict[str, Any], device: Dict[str, Any], verbose: bool = False, transfer_tracker=None) -> Dict[str, int]:
+def run_backup_rule(rule: Dict[str, Any], device: Dict[str, Any], verbose: bool = False, transfer_tracker=None, rename_duplicates: bool = False) -> Dict[str, int]:
     """
-    Execute a smart copy rule: resumable copy with progress tracking.
+    Execute a backup rule: resumable copy with progress tracking.
     
     Args:
         rule: Rule dictionary with phone_path, desktop_path, id
         device: Device dictionary with activation_uri
         verbose: Print verbose output
         transfer_tracker: Optional TransferStats instance for tracking
+        rename_duplicates: Default False for backup (do nothing on conflicts)
     
     Returns:
         Dictionary with counts: copied, resumed, skipped, failed, errors
@@ -177,7 +187,7 @@ def run_smart_copy_rule(rule: Dict[str, Any], device: Dict[str, Any], verbose: b
     source_uri = paths.build_phone_uri(activation_uri, phone_path)
     dest_dir = paths.expand_desktop(desktop_path_str)
     
-    print(f"\n{Colors.BOLD}{Colors.BRIGHT_YELLOW}💡 Smart Copy:{Colors.RESET} {Colors.CYAN}{phone_path}{Colors.RESET} {Colors.DIM}→{Colors.RESET} {Colors.GREEN}{shorten_path(dest_dir)}{Colors.RESET}")
+    print(f"\n{Colors.BOLD}{Colors.BRIGHT_YELLOW}💾 Backup:{Colors.RESET} {Colors.CYAN}{phone_path}{Colors.RESET} {Colors.DIM}→{Colors.RESET} {Colors.GREEN}{shorten_path(dest_dir)}{Colors.RESET}")
     
     # Create destination directory
     paths.ensure_dir(dest_dir)
@@ -215,9 +225,9 @@ def run_smart_copy_rule(rule: Dict[str, Any], device: Dict[str, Any], verbose: b
     stats = {
         "copied": 0,
         "resumed": len(already_copied),
-        "skipped": 0,
-        "failed": 0,
-        "errors": 0
+        "skipped": 0,  # Files skipped due to conflicts (when rename_duplicates=False)
+        "failed": 0,   # Actual copy failures
+        "errors": 0    # Other errors
     }
     
     # Save initial state with total count
@@ -236,15 +246,22 @@ def run_smart_copy_rule(rule: Dict[str, Any], device: Dict[str, Any], verbose: b
         paths.ensure_dir(dest_file_path.parent)
         
         # Check for duplicates and get final destination
-        dest_file = paths.next_available_name(dest_file_path.parent, dest_file_path.name)
+        dest_file = paths.next_available_name(dest_file_path.parent, dest_file_path.name, rename_duplicates=rename_duplicates)
+        
+        # Skip file if conflict and rename_duplicates is False
+        if dest_file is None:
+            stats["skipped"] += 1
+            state.mark_file_failed(rule_id, rel_path, "Skipped due to naming conflict")
+            continue
         
         # Progress indicator
         current_total = len(already_copied) + i
         percent = (current_total / total_files) * 100
         
         if verbose or (i % 10 == 0):  # Show every 10th file or all in verbose
-            filename = file_parts[-1]
-            print(f"  {Colors.DIM}[{current_total}/{total_files} - {percent:.1f}%]{Colors.RESET} {filename}")
+            # Use full relative path for better file identification
+            display_path = rel_path
+            print(f"  {Colors.DIM}[{current_total}/{total_files} - {percent:.1f}%]{Colors.RESET} {display_path}")
         
         # Try to copy the file
         try:
@@ -290,10 +307,20 @@ def run_smart_copy_rule(rule: Dict[str, Any], device: Dict[str, Any], verbose: b
     print(f"\n  {Colors.GREEN}✓ Copied:{Colors.RESET}   {stats['copied']} files (this run)")
     if stats["resumed"] > 0:
         print(f"  {Colors.CYAN}↻ Resumed:{Colors.RESET}  {stats['resumed']} files (previous runs)")
+    if stats["skipped"] > 0:
+        print(f"  {Colors.YELLOW}⊙ Exists:{Colors.RESET}   {stats['skipped']} files (already exist)")
     if stats["failed"] > 0:
         print(f"  {Colors.RED}✕ Failed:{Colors.RESET}   {stats['failed']} files")
     
     return stats
+
+
+def run_smart_copy_rule(rule: Dict[str, Any], device: Dict[str, Any], verbose: bool = False, transfer_tracker=None, rename_duplicates: bool = True) -> Dict[str, int]:
+    """
+    Deprecated: Use run_backup_rule instead.
+    Execute a smart copy rule: resumable copy with progress tracking.
+    """
+    return run_backup_rule(rule, device, verbose, transfer_tracker, rename_duplicates=False)
 
 
 def _build_file_list(source_uri: str, rel_path: str, file_list: list) -> None:
@@ -329,7 +356,7 @@ def _build_file_list(source_uri: str, rel_path: str, file_list: list) -> None:
             file_list.append(entry_rel_path)
 
 
-def run_move_rule(rule: Dict[str, Any], device: Dict[str, Any], verbose: bool = False, transfer_tracker=None) -> Dict[str, int]:
+def run_move_rule(rule: Dict[str, Any], device: Dict[str, Any], verbose: bool = False, transfer_tracker=None, rename_duplicates: bool = True) -> Dict[str, int]:
     """
     Execute a move rule: copy from phone to desktop, then delete from phone.
 
@@ -356,13 +383,13 @@ def run_move_rule(rule: Dict[str, Any], device: Dict[str, Any], verbose: bool = 
     paths.ensure_dir(dest_dir)
 
     # Track statistics
-    stats = {"copied": 0, "renamed": 0, "deleted": 0, "errors": 0, "folders": 0}
+    stats = {"copied": 0, "renamed": 0, "deleted": 0, "errors": 0, "skipped": 0, "folders": 0}
 
     # Files to delete after successful copy
     files_to_delete = []
 
     # Recursively process phone directory
-    _process_move_directory(source_uri, dest_dir, files_to_delete, stats, verbose, transfer_tracker=transfer_tracker)
+    _process_move_directory(source_uri, dest_dir, files_to_delete, stats, verbose, transfer_tracker=transfer_tracker, rename_duplicates=rename_duplicates)
 
     # Delete files from phone after successful copy
     # Don't list individual files - just count them
@@ -386,6 +413,8 @@ def run_move_rule(rule: Dict[str, Any], device: Dict[str, Any], verbose: bool = 
         print(f" {Colors.BRIGHT_WHITE}📁 Folders:{Colors.RESET}  {stats['folders']}")
     if stats["renamed"] > 0:
         print(f"  {Colors.YELLOW}↻ Renamed:{Colors.RESET}  {stats['renamed']} (duplicates)")
+    if stats["skipped"] > 0:
+        print(f"  {Colors.CYAN}⊙ Exists:{Colors.RESET}   {stats['skipped']} files")
     if stats["deleted"] > 0:
         print(f" {Colors.RED}🗑️  Deleted:{Colors.RESET}  {stats['deleted']}")
     if stats["errors"] > 0:
@@ -395,7 +424,7 @@ def run_move_rule(rule: Dict[str, Any], device: Dict[str, Any], verbose: bool = 
 
 
 def _process_move_directory(source_uri: str, dest_dir: Path, files_to_delete: list,
-                            stats: Dict[str, int], verbose: bool, in_subfolder: bool = False, transfer_tracker=None) -> None:
+                            stats: Dict[str, int], verbose: bool, in_subfolder: bool = False, transfer_tracker=None, rename_duplicates: bool = True) -> None:
     """Recursively process a directory for move operation.
 
     Args:
@@ -429,14 +458,21 @@ def _process_move_directory(source_uri: str, dest_dir: Path, files_to_delete: li
 
             # Recurse into subdirectory (track file count, mark as in_subfolder)
             folder_stats_before = stats["copied"]
-            _process_move_directory(entry_uri, sub_dest_dir, files_to_delete, stats, verbose, in_subfolder=True, transfer_tracker=transfer_tracker)
+            _process_move_directory(entry_uri, sub_dest_dir, files_to_delete, stats, verbose, in_subfolder=True, transfer_tracker=transfer_tracker, rename_duplicates=rename_duplicates)
             files_in_folder = stats["copied"] - folder_stats_before
             if files_in_folder > 0 and not verbose:
                 print(f"     {Colors.DIM}({files_in_folder} files){Colors.RESET}")
 
         elif "regular" in entry_type.lower() or entry_type == "1":  # Type 1 is regular file
             # Determine destination file path
-            dest_file = paths.next_available_name(dest_dir, entry)
+            dest_file = paths.next_available_name(dest_dir, entry, rename_duplicates=rename_duplicates)
+            
+            # Skip file if conflict and rename_duplicates is False
+            if dest_file is None:
+                stats["skipped"] += 1
+                if verbose:
+                    print(f"  {Colors.DIM}Skipped (exists):{Colors.RESET} {entry}")
+                continue
 
             # Check if needs rename due to duplicate
             will_rename = dest_file.name != entry
@@ -508,7 +544,7 @@ def _cleanup_empty_dirs(dir_uri: str, verbose: bool, skip_root: bool = True) -> 
             pass  # Ignore errors - directory might not be empty
 
 
-def run_sync_rule(rule: Dict[str, Any], device: Dict[str, Any], verbose: bool = False, transfer_tracker=None) -> Dict[str, int]:
+def run_sync_rule(rule: Dict[str, Any], device: Dict[str, Any], verbose: bool = False, transfer_tracker=None, rename_duplicates: bool = True) -> Dict[str, int]:
     """
     Execute a sync rule: mirror desktop to phone (desktop is source of truth).
 
@@ -545,7 +581,7 @@ def run_sync_rule(rule: Dict[str, Any], device: Dict[str, Any], verbose: bool = 
     expected_phone_files: Set[str] = set()
 
     # Copy/update files from desktop to phone
-    _sync_desktop_to_phone(src_dir, dest_uri, "", expected_phone_files, stats, verbose, transfer_tracker=transfer_tracker)
+    _sync_desktop_to_phone(src_dir, dest_uri, "", expected_phone_files, stats, verbose, transfer_tracker=transfer_tracker, rename_duplicates=rename_duplicates)
 
     # Delete extraneous files on phone
     if rule.get("delete_extraneous", True):
@@ -572,7 +608,7 @@ def run_sync_rule(rule: Dict[str, Any], device: Dict[str, Any], verbose: bool = 
 
 
 def _sync_desktop_to_phone(src_dir: Path, dest_uri: str, rel_path: str,
-                           expected_files: Set[str], stats: Dict[str, int], verbose: bool, transfer_tracker=None) -> None:
+                           expected_files: Set[str], stats: Dict[str, int], verbose: bool, transfer_tracker=None, rename_duplicates: bool = True) -> None:
     """Recursively sync desktop directory to phone (smart sync: skip unchanged files)."""
     if not src_dir.is_dir():
         return
@@ -586,7 +622,7 @@ def _sync_desktop_to_phone(src_dir: Path, dest_uri: str, rel_path: str,
             gio_utils.gio_mkdir(sub_dest_uri, parents=True)
 
             # Recurse
-            _sync_desktop_to_phone(entry, sub_dest_uri, entry_rel_path, expected_files, stats, verbose, transfer_tracker=transfer_tracker)
+            _sync_desktop_to_phone(entry, sub_dest_uri, entry_rel_path, expected_files, stats, verbose, transfer_tracker=transfer_tracker, rename_duplicates=rename_duplicates)
 
         elif entry.is_file():
             # Track this file as expected
@@ -607,6 +643,13 @@ def _sync_desktop_to_phone(src_dir: Path, dest_uri: str, rel_path: str,
                     stats["skipped"] += 1
                     if verbose:
                         print(f"  {Colors.CYAN}⊙{Colors.RESET} {Colors.DIM}{entry.name}{Colors.RESET} {Colors.DIM}(unchanged){Colors.RESET}")
+                    continue
+                
+            # File exists but size differs and rename_duplicates is False - skip it
+                if not rename_duplicates:
+                    stats["skipped"] += 1
+                    if verbose:
+                        print(f"  {Colors.DIM}Skipped (exists):{Colors.RESET} {entry.name}")
                     continue
             
             # File is new or changed - copy it

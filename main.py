@@ -33,9 +33,14 @@ Automate file transfers between Android phone (MTP) and Linux desktop.
   {CYAN}2. Daily sync:{RESET}
      phone-sync --run -y
      
-  {CYAN}3. Manual backup:{RESET}
-     phone-sync --copy -p default -pp /DCIM/Camera -dp ~/Backup --manual
-     phone-sync --run -r r-0003 -y
+  {CYAN}3. Web UI (foreground):{RESET}
+     phone-sync --web
+     
+  {CYAN}4. Web UI (background):{RESET}
+     phone-sync --web --background
+     
+  {CYAN}5. Stop web UI:{RESET}
+     phone-sync --web --stop
 
 {DIM}Default behavior: Dry-run mode (preview only). Use -y to execute.{RESET}
     """
@@ -86,8 +91,10 @@ Automate file transfers between Android phone (MTP) and Linux desktop.
                    help="📤 Add move rule (phone → desktop, delete from phone)")
     g.add_argument("--copy", action="store_true",
                    help="📋 Add copy rule (phone → desktop, keep on phone)")
+    g.add_argument("--backup", action="store_true",
+                   help="💾 Add backup rule (resumable copy, no deletions)")
     g.add_argument("--smart-copy", action="store_true",
-                   help="💡 Add smart copy rule (resumable, tracks progress)")
+                   help="(Deprecated: use --backup) Smart copy rule (resumable, tracks progress)")
     g.add_argument("--sync", action="store_true",
                    help="🔄 Add sync rule (desktop → phone, mirror)")
     g.add_argument("--remove-rule", action="store_true",
@@ -113,8 +120,10 @@ Automate file transfers between Android phone (MTP) and Linux desktop.
     
     # Web UI options
     web_opts = p.add_argument_group('Web UI options (for --web)')
-    web_opts.add_argument("--restart", action="store_true",
-                         help="Kill any existing instance before starting")
+    web_opts.add_argument("--background", action="store_true",
+                         help="Run as background daemon (survives terminal close)")
+    web_opts.add_argument("--stop", action="store_true",
+                         help="Stop any running web UI instance")
     
     # Device options
     device_opts = p.add_argument_group('Device options (for --add-device)')
@@ -131,7 +140,7 @@ Automate file transfers between Android phone (MTP) and Linux desktop.
                            help="Path on desktop (e.g., ~/Pictures)")
     rule_opts.add_argument("-i", "--id", metavar="ID",
                            help="Rule ID (for --remove-rule, --edit-rule)")
-    rule_opts.add_argument("-m", "--mode", choices=["move", "copy", "smart_copy", "sync"],
+    rule_opts.add_argument("-m", "--mode", choices=["move", "copy", "backup", "smart_copy", "sync"],
                            help="Rule mode (for --edit-rule)")
     rule_opts.add_argument("--manual", action="store_true",
                            help="Mark rule as manual-only (for --move, --copy, --sync)")
@@ -156,10 +165,11 @@ def main():
     
     # Handle web UI separately (doesn't need config loading)
     if args.web:
-        # Kill existing instance if --restart flag is used
-        if args.restart:
+        import subprocess
+        
+        # Stop any running instances if --stop flag is used
+        if args.stop:
             try:
-                import subprocess
                 # Find existing process
                 result = subprocess.run(
                     ['pgrep', '-f', 'python.*main.py.*--web'],
@@ -170,19 +180,65 @@ def main():
                 if result.returncode == 0 and result.stdout.strip():
                     pids = result.stdout.strip().split('\n')
                     current_pid = str(os.getpid())
+                    killed_any = False
                     
                     for pid in pids:
                         pid = pid.strip()
                         if pid and pid != current_pid:
                             try:
                                 os.kill(int(pid), signal.SIGTERM)
-                                print(f"✓ Killed existing instance (PID: {pid})")
+                                print(f"✓ Stopped web UI (PID: {pid})")
+                                killed_any = True
                             except ProcessLookupError:
                                 pass  # Process already dead
                             except PermissionError:
-                                print(f"⚠ Cannot kill PID {pid}: Permission denied", file=sys.stderr)
+                                print(f"⚠ Cannot stop PID {pid}: Permission denied", file=sys.stderr)
+                    
+                    if not killed_any:
+                        print("ℹ No running web UI instance found")
+                else:
+                    print("ℹ No running web UI instance found")
             except Exception as e:
-                print(f"⚠ Could not check for existing instances: {e}", file=sys.stderr)
+                print(f"⚠ Error stopping web UI: {e}", file=sys.stderr)
+            return 0
+        
+        # Always kill existing instances before starting (auto-restart)
+        try:
+            result = subprocess.run(
+                ['pgrep', '-f', 'python.*main.py.*--web'],
+                capture_output=True,
+                text=True
+            )
+            
+            if result.returncode == 0 and result.stdout.strip():
+                pids = result.stdout.strip().split('\n')
+                current_pid = str(os.getpid())
+                
+                for pid in pids:
+                    pid = pid.strip()
+                    if pid and pid != current_pid:
+                        try:
+                            os.kill(int(pid), signal.SIGTERM)
+                            print(f"✓ Restarted web UI (stopped old PID: {pid})")
+                        except ProcessLookupError:
+                            pass  # Process already dead
+                        except PermissionError:
+                            print(f"⚠ Cannot kill PID {pid}: Permission denied", file=sys.stderr)
+        except Exception as e:
+            print(f"⚠ Could not check for existing instances: {e}", file=sys.stderr)
+        
+        # Run as background daemon if requested
+        if args.background:
+            # Restart as daemon in background
+            subprocess.Popen(
+                [sys.executable, __file__, "--web"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True  # Detach from terminal
+            )
+            print("🌐 Web UI started in background (http://localhost:8080)")
+            print("   To stop: phone-sync --web --stop")
+            return 0
         
         from phone_migration import web_ui
         web_ui.start_web_ui(host='127.0.0.1', port=8080, debug=False)
@@ -230,16 +286,28 @@ def main():
             print(f"✓ Copy rule added to profile '{args.profile}'{manual_suffix}")
             return 0
         
+        if args.backup:
+            if not all([args.profile, args.phone_path, args.desktop_path]):
+                print("Error: --profile, --phone-path, and --desktop-path are required for --backup", 
+                      file=sys.stderr)
+                return 1
+            cfg.add_backup_rule(config, args.profile, args.phone_path, args.desktop_path, manual_only=args.manual)
+            cfg.save_config(config)
+            manual_suffix = " [MANUAL]" if args.manual else ""
+            print(f"✓ Backup rule added to profile '{args.profile}'{manual_suffix}")
+            print(f"  💾 Resumable backup with progress tracking (no deletions)")
+            return 0
+        
         if args.smart_copy:
             if not all([args.profile, args.phone_path, args.desktop_path]):
                 print("Error: --profile, --phone-path, and --desktop-path are required for --smart-copy", 
                       file=sys.stderr)
                 return 1
-            cfg.add_smart_copy_rule(config, args.profile, args.phone_path, args.desktop_path, manual_only=args.manual)
+            cfg.add_backup_rule(config, args.profile, args.phone_path, args.desktop_path, manual_only=args.manual)
             cfg.save_config(config)
             manual_suffix = " [MANUAL]" if args.manual else ""
-            print(f"✓ Smart copy rule added to profile '{args.profile}'{manual_suffix}")
-            print(f"  💡 Resumable copy with progress tracking")
+            print(f"✓ Backup rule added to profile '{args.profile}'{manual_suffix}")
+            print(f"  💾 Resumable backup with progress tracking (no deletions)")
             return 0
         
         if args.sync:

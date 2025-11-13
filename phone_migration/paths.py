@@ -107,21 +107,26 @@ def build_phone_uri(activation_uri: str, phone_path: str) -> str:
     return activation_uri + full_path
 
 
-def next_available_name(dest_dir: Path, base_name: str) -> Path:
+def next_available_name(dest_dir: Path, base_name: str, rename_duplicates: bool = True) -> Path:
     """
     Find next available filename by appending (1), (2), etc.
     
     Args:
         dest_dir: Destination directory
         base_name: Original filename
+        rename_duplicates: If True, rename on conflict; if False, return None on conflict
     
     Returns:
-        Available Path (original or with suffix)
+        Available Path (original or with suffix), or None if conflict and rename_duplicates=False
     """
     dest_path = dest_dir / base_name
     
     if not dest_path.exists():
         return dest_path
+    
+    # File exists and rename_duplicates is False - return None to skip
+    if not rename_duplicates:
+        return None
     
     # Split name and extension
     name_parts = base_name.rsplit(".", 1)

@@ -127,8 +127,8 @@ def add_copy_rule(config: Dict[str, Any], profile_name: str, phone_path: str, de
     profile["rules"].append(rule)
 
 
-def add_smart_copy_rule(config: Dict[str, Any], profile_name: str, phone_path: str, desktop_path: str, manual_only: bool = False) -> None:
-    """Add a smart copy rule to a profile (resumable copy with progress tracking)."""
+def add_backup_rule(config: Dict[str, Any], profile_name: str, phone_path: str, desktop_path: str, manual_only: bool = False) -> None:
+    """Add a backup rule to a profile (resumable copy with progress tracking)."""
     profile = find_profile(config, profile_name)
     if not profile:
         raise ValueError(f"Profile '{profile_name}' not found")
@@ -138,7 +138,7 @@ def add_smart_copy_rule(config: Dict[str, Any], profile_name: str, phone_path: s
     
     rule = {
         "id": generate_rule_id(profile),
-        "mode": "smart_copy",
+        "mode": "backup",
         "phone_path": phone_path,
         "desktop_path": desktop_path,
         "recursive": True,
@@ -146,6 +146,12 @@ def add_smart_copy_rule(config: Dict[str, Any], profile_name: str, phone_path: s
     }
     
     profile["rules"].append(rule)
+
+
+# Backward compatibility alias
+def add_smart_copy_rule(config: Dict[str, Any], profile_name: str, phone_path: str, desktop_path: str, manual_only: bool = False) -> None:
+    """Deprecated: Use add_backup_rule instead."""
+    return add_backup_rule(config, profile_name, phone_path, desktop_path, manual_only)
 
 
 def add_sync_rule(config: Dict[str, Any], profile_name: str, desktop_path: str, phone_path: str, manual_only: bool = False) -> None:
@@ -311,10 +317,14 @@ def print_rules(config: Dict[str, Any], profile_name: str) -> None:
             mode_icon = "📋"
             mode_color = BRIGHT_CYAN
             mode_text = "COPY"
-        elif mode == "smart_copy":
-            mode_icon = "💡"
+        elif mode == "backup":
+            mode_icon = "💾"
             mode_color = BRIGHT_YELLOW
-            mode_text = "SMART COPY"
+            mode_text = "BACKUP"
+        elif mode == "smart_copy":  # Legacy support
+            mode_icon = "💾"
+            mode_color = BRIGHT_YELLOW
+            mode_text = "BACKUP"
         elif mode == "sync":
             mode_icon = "🔄"
             mode_color = GREEN
@@ -331,13 +341,13 @@ def print_rules(config: Dict[str, Any], profile_name: str) -> None:
         print(f"{DIM}[{rule_id}]{RESET} {mode_icon} {BOLD}{mode_color}{mode_text}{RESET}{manual_tag}")
         
         # Paths and action
-        if mode in ["move", "copy", "smart_copy"]:
+        if mode in ["move", "copy", "backup", "smart_copy"]:
             print(f"  {DIM}Phone:  {RESET} {CYAN}{phone_path}{RESET}")
             print(f"  {DIM}Desktop:{RESET} {GREEN}{shorten(desktop_path)}{RESET}")
             if mode == "move":
                 print(f"  {DIM}Action: {RESET} Copy to desktop, then {YELLOW}delete from phone{RESET}")
-            elif mode == "smart_copy":
-                print(f"  {DIM}Action: {RESET} {BRIGHT_CYAN}Resumable copy{RESET} to desktop {DIM}(tracks progress){RESET}")
+            elif mode in ["backup", "smart_copy"]:
+                print(f"  {DIM}Action: {RESET} {BRIGHT_CYAN}Backup{RESET} to desktop {DIM}(resumable, no deletions){RESET}")
             else:
                 print(f"  {DIM}Action: {RESET} Copy to desktop, {GREEN}keep on phone{RESET}")
         elif mode == "sync":

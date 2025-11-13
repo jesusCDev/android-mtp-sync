@@ -14,8 +14,24 @@ from . import config as cfg, device, runner, operations, browser
 
 app = Flask(__name__, 
             template_folder='web_templates',
-            static_folder='web_static')
+            static_folder='static',
+            static_url_path='/static')
 CORS(app)  # Enable CORS for API requests
+
+# Disable aggressive caching during development
+app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0
+app.config['TEMPLATES_AUTO_RELOAD'] = True
+app.config['CACHE_TYPE'] = 'null'
+
+# Disable Flask's caching for templates
+@app.after_request
+def add_no_cache_headers(response):
+    response.cache_control.no_cache = True
+    response.cache_control.no_store = True
+    response.cache_control.must_revalidate = True
+    response.headers['Pragma'] = 'no-cache'
+    response.headers['Expires'] = '0'
+    return response
 
 # Global state
 current_run_status = {
@@ -76,16 +92,16 @@ def rules():
     return render_template('rules.html')
 
 
-@app.route('/run')
-def run_page():
-    """Run operations page."""
-    return render_template('run.html')
-
-
 @app.route('/history')
 def history():
     """History/logs page."""
     return render_template('history.html')
+
+
+@app.route('/documentation')
+def documentation():
+    """Documentation page."""
+    return render_template('documentation.html')
 
 
 # === API Routes ===
@@ -169,8 +185,8 @@ def api_add_rule():
             cfg.add_move_rule(config, profile_name, phone_path, desktop_path, manual_only)
         elif mode == "copy":
             cfg.add_copy_rule(config, profile_name, phone_path, desktop_path, manual_only)
-        elif mode == "smart_copy":
-            cfg.add_smart_copy_rule(config, profile_name, phone_path, desktop_path, manual_only)
+        elif mode in ["backup", "smart_copy"]:
+            cfg.add_backup_rule(config, profile_name, phone_path, desktop_path, manual_only)
         elif mode == "sync":
             cfg.add_sync_rule(config, profile_name, desktop_path, phone_path, manual_only)
         else:
@@ -207,6 +223,7 @@ def api_run():
     dry_run = data.get("dry_run", False)
     include_manual = data.get("include_manual", False)
     notify = data.get("notify", False)
+    rename_duplicates = data.get("rename_duplicates", True)  # Default to True for backward compatibility
     
     # Start run in background thread
     def run_sync():
@@ -237,14 +254,15 @@ def api_run():
                 else:
                     rules_count = len(all_rules)
             
-            # Run with captured output
+            # Run with captured output (verbose=True for detailed file info in web UI)
             runner.run_for_connected_device(
                 config, 
-                verbose=False, 
+                verbose=True, 
                 dry_run=dry_run, 
                 rule_ids=rule_ids,
                 notify=notify,
-                include_manual=include_manual
+                include_manual=include_manual,
+                rename_duplicates=rename_duplicates
             )
             
             # Get captured output and strip ANSI codes
@@ -300,7 +318,49 @@ def api_run():
 @app.route('/api/run/status')
 def api_run_status():
     """Get current run status."""
-    return jsonify(current_run_status)
+    # Parse stats from logs
+    stats = {"copied": 0, "skipped": 0, "deleted": 0, "errors": 0, "synced": 0}
+    
+    for log_line in current_run_status.get("logs", []):
+        import re
+        
+        # Parse Copied: X
+        copied_match = re.search(r'Copied:\s*(\d+)', log_line)
+        if copied_match:
+            stats["copied"] = max(stats["copied"], int(copied_match.group(1)))
+        
+        # Parse Skipped: X or Exists: X
+        skipped_match = re.search(r'(?:Skipped|Exists):\s*(\d+)', log_line)
+        if skipped_match:
+            stats["skipped"] = max(stats["skipped"], int(skipped_match.group(1)))
+        
+        # Parse Deleted: X
+        deleted_match = re.search(r'Deleted:\s*(\d+)', log_line)
+        if deleted_match:
+            stats["deleted"] = max(stats["deleted"], int(deleted_match.group(1)))
+        
+        # Parse Synced: X
+        synced_match = re.search(r'Synced:\s*(\d+)', log_line)
+        if synced_match:
+            stats["synced"] = max(stats["synced"], int(synced_match.group(1)))
+        
+        # Parse smart-copy progress
+        progress_match = re.search(r'\[(\d+)/(\d+)\s*-\s*([\d.]+)%\]', log_line)
+        if progress_match:
+            current_run_status["stats"]["smart_copy_current"] = int(progress_match.group(1))
+            current_run_status["stats"]["smart_copy_total"] = int(progress_match.group(2))
+    
+    # Parse errors from logs
+    for log_line in current_run_status.get("logs", []):
+        import re
+        errors_match = re.search(r'(?:Errors|Error):\s*(\d+)', log_line)
+        if errors_match:
+            stats["errors"] = max(stats["errors"], int(errors_match.group(1)))
+    
+    # Return status with parsed stats
+    result = dict(current_run_status)
+    result["stats"] = stats
+    return jsonify(result)
 
 
 @app.route('/api/device/detect')

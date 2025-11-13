@@ -1,7 +1,7 @@
 """Runner to detect connected device and execute configured rules."""
 
 from typing import Any, Dict, Optional
-from . import device, config as cfg, operations, gio_utils, notifications
+from . import device, config as cfg, operations, gio_utils, paths, notifications
 from .transfer_stats import TransferStats
 
 # ANSI color codes
@@ -65,7 +65,7 @@ def detect_connected_device(config: Dict[str, Any], verbose: bool = False) -> Op
     return None
 
 
-def run_for_connected_device(config: Dict[str, Any], verbose: bool = False, dry_run: bool = False, rule_ids: Optional[list] = None, notify: bool = False, include_manual: bool = False) -> None:
+def run_for_connected_device(config: Dict[str, Any], verbose: bool = False, dry_run: bool = False, rule_ids: Optional[list] = None, notify: bool = False, include_manual: bool = False, rename_duplicates: bool = True) -> None:
     """
     Detect connected device and run configured rules.
     
@@ -76,6 +76,7 @@ def run_for_connected_device(config: Dict[str, Any], verbose: bool = False, dry_
         rule_ids: Optional list of specific rule IDs to run (ignores manual_only flag)
         notify: Send desktop notifications on completion
         include_manual: Include manual-only rules in execution
+        rename_duplicates: When True, rename files on conflict; when False, skip them
     """
     # Print program header
     print(f"\n{Colors.BOLD}{Colors.BRIGHT_WHITE}{'='*60}{Colors.RESET}")
@@ -92,13 +93,21 @@ def run_for_connected_device(config: Dict[str, Any], verbose: bool = False, dry_
     profile = detect_connected_device(config, verbose)
     
     if not profile:
-        print(f"\n{Colors.RED}❌ No matching device found.{Colors.RESET}")
-        print(f"\n{Colors.BOLD}Make sure:{Colors.RESET}")
-        print(f"  {Colors.DIM}1.{Colors.RESET} Your phone is connected via USB")
-        print(f"  {Colors.DIM}2.{Colors.RESET} File Transfer mode is enabled")
-        print(f"  {Colors.DIM}3.{Colors.RESET} Your phone is unlocked")
-        print(f"  {Colors.DIM}4.{Colors.RESET} You've registered the device with: {Colors.CYAN}phone-sync --add-device{Colors.RESET}")
-        print(f"\n{Colors.DIM}Run 'gio mount -li' to see connected MTP devices{Colors.RESET}")
+        print(f"\n{Colors.RED}❌ No device connected or profile not configured{Colors.RESET}")
+        print(f"\n{Colors.BOLD}Common causes:{Colors.RESET}")
+        print(f"  {Colors.DIM}•{Colors.RESET} Phone is not connected via USB")
+        print(f"  {Colors.DIM}•{Colors.RESET} File Transfer mode is not enabled")
+        print(f"  {Colors.DIM}•{Colors.RESET} Phone is locked or not visible")
+        print(f"  {Colors.DIM}•{Colors.RESET} Device is not registered yet")
+        
+        print(f"\n{Colors.BOLD}What to do:{Colors.RESET}")
+        print(f"  {Colors.CYAN}1. Connect your phone{Colors.RESET} and enable File Transfer mode")
+        print(f"  {Colors.CYAN}2. Run:{Colors.RESET} phone-sync --add-device --name default")
+        print(f"  {Colors.CYAN}3. Then run:{Colors.RESET} phone-sync --run")
+        
+        print(f"\n{Colors.BOLD}Debug:{Colors.RESET}")
+        print(f"  {Colors.DIM}To see connected MTP devices:{Colors.RESET} gio mount -li | grep -i mtp")
+        print(f"  {Colors.DIM}To check config:{Colors.RESET} cat ~/.config/phone-migration/config.json | jq .")
         
         # Send notification if enabled
         if notify:
@@ -110,7 +119,29 @@ def run_for_connected_device(config: Dict[str, Any], verbose: bool = False, dry_
     device_info = profile.get("device", {})
     display_name = device_info.get("display_name", "Unknown")
     
-    print(f"{Colors.BRIGHT_GREEN}✓ Found registered device:{Colors.RESET} {Colors.BOLD}{display_name}{Colors.RESET} {Colors.DIM}(profile: {profile_name}){Colors.RESET}\n")
+    print(f"{Colors.BRIGHT_GREEN}✓ Found registered device:{Colors.RESET} {Colors.BOLD}{display_name}{Colors.RESET} {Colors.DIM}(profile: {profile_name}){Colors.RESET}")
+    
+    # Get activation URI
+    activation_uri = device_info.get("activation_uri", "")
+    
+    # Test device accessibility
+    if activation_uri:
+        print(f"{Colors.DIM}Checking device accessibility...{Colors.RESET}")
+        try:
+            # Try to list the root storage to check if device is accessible
+            test_uri = paths.build_phone_uri(activation_uri, "/")
+            entries = gio_utils.gio_list(test_uri)
+            if not entries:  # Empty list might indicate locked phone
+                print(f"{Colors.YELLOW}⚠ Warning:{Colors.RESET} Device appears to be {Colors.YELLOW}locked{Colors.RESET} or files are not accessible")
+                print(f"  {Colors.DIM}Unlock your phone and enable File Transfer mode for full access{Colors.RESET}")
+            else:
+                print(f"{Colors.GREEN}✓ Device accessible{Colors.RESET}")
+        except Exception as e:
+            if verbose:
+                print(f"{Colors.YELLOW}⚠ Warning:{Colors.RESET} Could not verify device accessibility: {e}")
+            print(f"{Colors.DIM}If no files are found, make sure phone is unlocked{Colors.RESET}")
+    
+    print()  # Add spacing
     
     # Get rules
     all_rules = profile.get("rules", [])
@@ -159,7 +190,6 @@ def run_for_connected_device(config: Dict[str, Any], verbose: bool = False, dry_
     print(f"{Colors.DIM}{'='*60}{Colors.RESET}")
     
     # Ensure device is mounted
-    activation_uri = device_info.get("activation_uri", "")
     if activation_uri:
         try:
             import subprocess
@@ -168,7 +198,7 @@ def run_for_connected_device(config: Dict[str, Any], verbose: bool = False, dry_
             pass  # Already mounted
     
     # Execute each rule
-    total_stats = {"copied": 0, "renamed": 0, "deleted": 0, "errors": 0, "moved": 0, "synced": 0, "backed_up": 0, "folders": 0, "transfer_stats": None}
+    total_stats = {"copied": 0, "renamed": 0, "deleted": 0, "errors": 0, "skipped": 0, "moved": 0, "synced": 0, "backed_up": 0, "folders": 0, "transfer_stats": None}
     
     # Start transfer statistics tracking
     transfer_tracker = TransferStats()
@@ -181,30 +211,35 @@ def run_for_connected_device(config: Dict[str, Any], verbose: bool = False, dry_
         
         try:
             if mode == "move":
-                stats = operations.run_move_rule(rule, device_info, verbose, transfer_tracker)
+                stats = operations.run_move_rule(rule, device_info, verbose, transfer_tracker, rename_duplicates=rename_duplicates)
                 total_stats["copied"] += stats.get("copied", 0)
                 total_stats["renamed"] += stats.get("renamed", 0)
                 total_stats["deleted"] += stats.get("deleted", 0)
                 total_stats["errors"] += stats.get("errors", 0)
+                total_stats["skipped"] += stats.get("skipped", 0)
                 total_stats["moved"] += stats.get("copied", 0)  # Moved = files copied from phone
                 total_stats["folders"] += stats.get("folders", 0)
             
             elif mode == "copy":
-                stats = operations.run_copy_rule(rule, device_info, verbose, transfer_tracker)
+                stats = operations.run_copy_rule(rule, device_info, verbose, transfer_tracker, rename_duplicates=rename_duplicates)
                 total_stats["copied"] += stats.get("copied", 0)
                 total_stats["renamed"] += stats.get("renamed", 0)
                 total_stats["errors"] += stats.get("errors", 0)
+                total_stats["skipped"] += stats.get("skipped", 0)
                 total_stats["backed_up"] += stats.get("copied", 0)  # Backed up = files copied without deletion
                 total_stats["folders"] += stats.get("folders", 0)
             
-            elif mode == "smart_copy":
-                stats = operations.run_smart_copy_rule(rule, device_info, verbose, transfer_tracker)
+            elif mode in ["backup", "smart_copy"]:
+                # Use backup function (smart_copy is legacy name)
+                func = operations.run_backup_rule if hasattr(operations, 'run_backup_rule') else operations.run_smart_copy_rule
+                stats = func(rule, device_info, verbose, transfer_tracker, rename_duplicates=False)  # Backup defaults to False for conflicts
                 total_stats["copied"] += stats.get("copied", 0)
                 total_stats["errors"] += stats.get("errors", 0)
+                total_stats["skipped"] += stats.get("skipped", 0)
                 total_stats["backed_up"] += stats.get("copied", 0) + stats.get("resumed", 0)  # Total including resumed
             
             elif mode == "sync":
-                stats = operations.run_sync_rule(rule, device_info, verbose, transfer_tracker)
+                stats = operations.run_sync_rule(rule, device_info, verbose, transfer_tracker, rename_duplicates=rename_duplicates)
                 total_stats["copied"] += stats.get("copied", 0)
                 total_stats["deleted"] += stats.get("deleted", 0)
                 total_stats["errors"] += stats.get("errors", 0)
@@ -239,12 +274,16 @@ def run_for_connected_device(config: Dict[str, Any], verbose: bool = False, dry_
         print(f"  {Colors.BRIGHT_BLUE}📥 Files synced to phone:{Colors.RESET}       {Colors.BOLD}{synced_count}{Colors.RESET}")
     if total_stats["renamed"] > 0:
         print(f"  {Colors.YELLOW}🔄 Files renamed (duplicates):{Colors.RESET}  {Colors.BOLD}{total_stats['renamed']}{Colors.RESET}")
+    if total_stats["skipped"] > 0:
+        print(f"  {Colors.CYAN}⊙ Files skipped (exist):{Colors.RESET}      {Colors.BOLD}{total_stats['skipped']}{Colors.RESET}")
     if total_stats["deleted"] > 0:
         print(f"  {Colors.RED}🗑️  Files deleted from phone:{Colors.RESET}    {Colors.BOLD}{total_stats['deleted']}{Colors.RESET}")
     
     if total_stats["errors"] > 0:
         print(f"  {Colors.RED}⚠️  Errors:{Colors.RESET} {Colors.BOLD}{total_stats['errors']}{Colors.RESET}")
         print(f"\n{Colors.RED}{Colors.BOLD}❌ Completed with errors{Colors.RESET}")
+    elif total_stats["skipped"] > 0 and (moved_count + backed_up_count + synced_count + total_stats['renamed'] > 0):
+        print(f"\n{Colors.BRIGHT_GREEN}{Colors.BOLD}✅ Completed with {total_stats['skipped']} file(s) skipped{Colors.RESET}")
     else:
         if moved_count + backed_up_count + synced_count + total_stats['deleted'] > 0:
             print(f"\n{Colors.BRIGHT_GREEN}{Colors.BOLD}✅ All operations completed successfully!{Colors.RESET}")
