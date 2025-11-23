@@ -143,14 +143,33 @@
     
     .empty-state {
         text-align: center;
-        padding: 48px 24px;
+        padding: 64px 32px;
         color: var(--text-muted);
+        background: linear-gradient(135deg, rgba(0, 217, 255, 0.02) 0%, rgba(255, 6, 110, 0.01) 100%);
+        border-radius: var(--radius-card);
     }
     
     .empty-state i {
-        font-size: 48px;
-        margin-bottom: 16px;
-        color: var(--icon-idle);
+        font-size: 56px;
+        margin-bottom: 20px;
+        background: linear-gradient(135deg, var(--accent-primary) 0%, var(--accent-secondary) 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+        opacity: 0.6;
+    }
+    
+    .empty-state h3 {
+        font-size: 18px;
+        font-weight: 600;
+        color: var(--text);
+        margin: 16px 0 8px 0;
+    }
+    
+    .empty-state p {
+        font-size: 14px;
+        color: var(--text-muted);
+        margin: 0;
     }
     
     /* Folder Browser Modal */

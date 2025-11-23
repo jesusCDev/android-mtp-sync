@@ -44,8 +44,8 @@ let currentProfile = null;
                 document.getElementById('rules-container').innerHTML = `
                     <div class="empty-state">
                         <i class="fas fa-inbox"></i>
-                        <p>No rules configured yet</p>
-                        <button class="btn" onclick="openAddModal()" style="margin-top: 16px;"><i class="fas fa-plus"></i> Add Your First Rule</button>
+                        <h3 style="font-size: 16px; font-weight: 600; color: var(--text); margin: 16px 0 8px 0;">No rules configured yet</h3>
+                        <p style="font-size: 14px; margin-bottom: 0;">Create a rule using the button in the header to get started</p>
                     </div>
                 `;
                 return;
