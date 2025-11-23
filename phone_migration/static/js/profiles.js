@@ -28,6 +28,29 @@ async function loadProfiles() {
     }
 }
 
+async function loadConnectedDevices() {
+    try {
+        const devices = await apiGet('/api/device/detect');
+        const deviceSelect = document.getElementById('device-select');
+        
+        if (!devices || devices.length === 0) {
+            deviceSelect.innerHTML = '<option value="">No devices connected</option>';
+            return;
+        }
+        
+        // Build options
+        let html = '<option value="">Select a device...</option>';
+        devices.forEach(device => {
+            html += `<option value="${device.mtp_id}" data-device-name="${device.device_name}">${device.device_name}</option>`;
+        });
+        deviceSelect.innerHTML = html;
+    } catch (error) {
+        console.error('Error loading devices:', error);
+        const deviceSelect = document.getElementById('device-select');
+        deviceSelect.innerHTML = '<option value="">Error loading devices</option>';
+    }
+}
+
 function openAddModal() {
     const modal = document.getElementById('add-modal');
     const deviceSelect = document.getElementById('device-select');
@@ -35,12 +58,28 @@ function openAddModal() {
     // Reset for new profile creation
     modal.dataset.editingProfile = '';
     document.querySelector('.modal-header h2').textContent = 'Add Device Profile';
-    modal.querySelector('.btn-success').textContent = 'Add Profile';
+    document.querySelector('.btn-success').textContent = 'Add Profile';
     document.getElementById('profile-name').value = '';
     
     // Re-enable device select for new profiles
     deviceSelect.disabled = false;
     deviceSelect.value = '';  // Clear selection
+    
+    // Load connected devices
+    loadConnectedDevices();
+    
+    // Check if we have prefilled device info from dashboard
+    if (window.prefilledDevice) {
+        const device = window.prefilledDevice;
+        // Pre-fill profile name with device name
+        document.getElementById('profile-name').value = device.name || '';
+        // Select the device
+        setTimeout(() => {
+            deviceSelect.value = device.mtp_id || '';
+        }, 100);
+        // Clear the prefilled data so it doesn't persist
+        delete window.prefilledDevice;
+    }
     
     modal.style.display = 'flex';
 }
@@ -142,4 +181,14 @@ function closeModal() {
 }
 
 // Load profiles on page load
-document.addEventListener('DOMContentLoaded', loadProfiles);
+document.addEventListener('DOMContentLoaded', async () => {
+    loadProfiles();
+    
+    // Auto-open modal if coming from dashboard with prefilled device
+    if (window.prefilledDevice) {
+        // Small delay to ensure DOM is ready
+        setTimeout(() => {
+            openAddModal();
+        }, 100);
+    }
+});

@@ -440,6 +440,32 @@ python3 main.py --move --profile work \
 python3 main.py --run
 ```
 
+## Important: MTP Exclusivity Limitation
+
+⚠️ **Linux MTP only allows ONE application to access the device at a time.**
+
+If you open your phone in a file manager (Nemo, Dolphin, Nautilus, etc.) while using this tool, you will get:
+```
+Device Connected But Not Accessible
+```
+
+**Solution:**
+```bash
+# Close all file managers and restart GVFS
+./prepare_mtp.sh
+
+# Or manually:
+killall nemo dolphin nautilus pcmanfm thunar
+systemctl --user restart gvfs-daemon
+```
+
+Then run the tool:
+```bash
+phone-sync --web
+```
+
+**Important:** Do not open your phone in a file manager while using this tool. Only one application can have exclusive MTP access at a time.
+
 ## Troubleshooting
 
 ### Phone Not Detected

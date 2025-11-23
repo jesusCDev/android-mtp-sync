@@ -109,6 +109,7 @@ def documentation():
 @app.route('/api/status')
 def api_status():
     """Get current system status."""
+    from . import gio_utils, paths
     config = cfg.load_config()
     
     # Detect connected device
@@ -116,8 +117,37 @@ def api_status():
     
     if profile:
         device_info = profile.get("device", {})
+        activation_uri = device_info.get("activation_uri", "")
+        
+        # Check device accessibility with a quick check
+        # Don't block too long - just verify device responds
+        accessible = False
+        if activation_uri:
+            try:
+                # Quick check: just try to mount, don't list files (can be slow)
+                # Use timeout to prevent hanging
+                import subprocess
+                import signal
+                
+                def timeout_handler(signum, frame):
+                    raise TimeoutError("Device check timeout")
+                
+                # Set 3 second timeout
+                signal.signal(signal.SIGALRM, timeout_handler)
+                signal.alarm(3)
+                try:
+                    subprocess.run(["gio", "mount", activation_uri], capture_output=True, timeout=2, check=False)
+                    # If mount succeeds, device is responsive
+                    accessible = True
+                finally:
+                    signal.alarm(0)  # Cancel alarm
+            except (TimeoutError, subprocess.TimeoutExpired, Exception):
+                # Timeout or error = not accessible
+                accessible = False
+        
         return jsonify({
             "connected": True,
+            "accessible": accessible,
             "device_name": device_info.get("display_name", "Unknown"),
             "profile_name": profile.get("name", "unknown"),
             "rule_count": len(profile.get("rules", []))
@@ -125,15 +155,72 @@ def api_status():
     else:
         return jsonify({
             "connected": False,
+            "accessible": False,
             "device_name": None,
             "profile_name": None,
             "rule_count": 0
         })
 
 
-@app.route('/api/profiles')
+@app.route('/api/profiles', methods=['GET', 'POST'])
 def api_profiles():
-    """Get all profiles."""
+    """Get all profiles or create a new profile."""
+    if request.method == 'POST':
+        # Create a new profile
+        data = request.json
+        profile_name = data.get("name")
+        device_id = data.get("device_id")
+        
+        if not profile_name or not device_id:
+            return jsonify({"error": "Profile name and device_id are required"}), 400
+        
+        config = cfg.load_config()
+        
+        # Check if profile already exists
+        if cfg.find_profile(config, profile_name):
+            return jsonify({"error": f"Profile '{profile_name}' already exists"}), 409
+        
+        try:
+            # Get connected devices to find the one matching device_id
+            devices = device.enumerate_mtp_mounts()
+            matching_device = None
+            
+            for d in devices:
+                import re
+                activation_uri = d.get("activation_uri", "")
+                mtp_match = re.search(r'mtp://\[([^\]]+)\]', activation_uri)
+                mtp_id = mtp_match.group(1) if mtp_match else activation_uri
+                
+                if mtp_id == device_id:
+                    matching_device = d
+                    break
+            
+            if not matching_device:
+                return jsonify({"error": "Device not found or not connected"}), 404
+            
+            # Get device fingerprint for unique identification
+            id_type, id_value = device.device_fingerprint(matching_device, verbose=False)
+            
+            # Create profile
+            profile = {
+                "name": profile_name,
+                "device": {
+                    "display_name": matching_device.get("display_name", "Unknown Device"),
+                    "id_type": id_type,
+                    "id_value": id_value,
+                    "activation_uri": matching_device.get("activation_uri", "")
+                },
+                "rules": []
+            }
+            
+            cfg.add_profile(config, profile)
+            cfg.save_config(config)
+            
+            return jsonify({"success": True, "message": f"Profile '{profile_name}' created"})
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+    
+    # GET: Return all profiles
     config = cfg.load_config()
     profiles = config.get("profiles", [])
     
@@ -368,15 +455,53 @@ def api_device_detect():
     """Detect connected MTP devices."""
     devices = device.enumerate_mtp_mounts()
     
-    return jsonify([
-        {
+    result = []
+    for d in devices:
+        activation_uri = d.get("activation_uri", "")
+        # Extract MTP ID from URI (e.g., "mtp://[usb:003,009]/" -> "usb:003,009")
+        import re
+        mtp_match = re.search(r'mtp://\[([^\]]+)\]', activation_uri)
+        mtp_id = mtp_match.group(1) if mtp_match else activation_uri
+        
+        result.append({
             "device_name": d.get("display_name", "Unknown"),
-            "mtp_id": device.extract_mtp_id(d.get("activation_uri", "")),
-            "activation_uri": d.get("activation_uri", ""),
+            "mtp_id": mtp_id,
+            "activation_uri": activation_uri,
             "default_location": d.get("default_location", "")
-        }
-        for d in devices
-    ])
+        })
+    
+    return jsonify(result)
+
+
+@app.route('/api/device/unregistered')
+def api_device_unregistered():
+    """Detect connected MTP devices that don't have a matching profile."""
+    import re
+    config = cfg.load_config()
+    devices = device.enumerate_mtp_mounts()
+    
+    unregistered = []
+    for d in devices:
+        # Get device fingerprint
+        id_type, id_value = device.device_fingerprint(d, verbose=False)
+        
+        # Check if profile exists for this device
+        profile = cfg.find_profile_by_device_id(config, id_type, id_value)
+        if not profile:
+            # Device not registered
+            activation_uri = d.get("activation_uri", "")
+            mtp_match = re.search(r'mtp://\[([^\]]+)\]', activation_uri)
+            mtp_id = mtp_match.group(1) if mtp_match else activation_uri
+            
+            unregistered.append({
+                "device_name": d.get("display_name", "Unknown"),
+                "mtp_id": mtp_id,
+                "activation_uri": activation_uri,
+                "id_type": id_type,
+                "id_value": id_value
+            })
+    
+    return jsonify(unregistered)
 
 
 @app.route('/api/device/register', methods=['POST'])
@@ -406,6 +531,34 @@ def api_device_register():
         )
         cfg.save_config(config)
         return jsonify({"success": True, "message": f"Device registered as '{profile_name}'"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/profiles/<profile_name>', methods=['PUT'])
+def api_update_profile(profile_name):
+    """Update a profile (e.g., rename)."""
+    data = request.json
+    new_name = data.get("name")
+    
+    if not new_name:
+        return jsonify({"error": "Profile name is required"}), 400
+    
+    config = cfg.load_config()
+    profile = cfg.find_profile(config, profile_name)
+    
+    if not profile:
+        return jsonify({"error": "Profile not found"}), 404
+    
+    # Check if new name already exists (if different from current)
+    if new_name != profile_name:
+        if cfg.find_profile(config, new_name):
+            return jsonify({"error": f"Profile '{new_name}' already exists"}), 409
+    
+    try:
+        profile["name"] = new_name
+        cfg.save_config(config)
+        return jsonify({"success": True, "message": "Profile updated"})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 

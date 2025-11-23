@@ -10,21 +10,51 @@ let deviceStatus = null;
     let manualRules = [];
     let selectedRuleIds = [];
     
+    function openAddModalForDevice(deviceName, mtpId, idType, idValue) {
+        // Store device info in window so profiles.js can access it
+        window.prefilledDevice = {
+            name: deviceName,
+            mtp_id: mtpId,
+            id_type: idType,
+            id_value: idValue
+        };
+        
+        // Navigate to profiles page and open modal
+        window.location.href = '/profiles';
+    }
+    
     async function loadDeviceStatus() {
         try {
             const status = await apiGet('/api/status');
             deviceStatus = status;
             
-            // Update button state based on connection status
+            // Update button state based on connection AND accessibility
             const runBtn = document.getElementById('run-btn');
             const manualBtn = document.getElementById('manual-btn');
-            if (runBtn) runBtn.disabled = !status.connected;
-            if (manualBtn) manualBtn.disabled = !status.connected;
+            const isReady = status.connected && status.accessible;
+            if (runBtn) runBtn.disabled = !isReady;
+            if (manualBtn) manualBtn.disabled = !isReady;
             
-            const statusHtml = status.connected
-                ? `
+            let statusHtml = '';
+            
+            // Add MTP exclusivity warning at the top
+            const warningBanner = `
+                <div style="background: rgba(255, 193, 7, 0.15); border: 1.5px solid #ffc107; border-radius: var(--radius-card); padding: 12px; margin-bottom: 16px;">
+                    <div style="display: flex; align-items: center; gap: 10px;">
+                        <i class="fas fa-info-circle" style="color: #ffc107; font-size: 16px;"></i>
+                        <span style="color: #ffc107; font-size: 13px;">
+                            <strong>⚠️ MTP Limitation:</strong> Close all file managers (Nemo, Dolphin, etc.) before using this tool. Only one app can access your phone at a time.
+                            <a href="#" onclick="alert('To fix:\n1. killall nemo dolphin nautilus pcmanfm thunar\n2. systemctl --user restart gvfs-daemon\n3. Reconnect your phone'); return false;" style="color: #ffc107; text-decoration: underline; margin-left: 8px;">How to fix →</a>
+                        </span>
+                    </div>
+                </div>
+            `;
+            
+            if (status.connected && status.accessible) {
+                // Device connected and accessible - all good
+                statusHtml = warningBanner + `
                     <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 16px;">
-                        <span class="status-badge connected"><i class="fas fa-check-circle"></i> Connected</span>
+                        <span class="status-badge connected"><i class="fas fa-check-circle"></i> Connected & Ready</span>
                     </div>
                     <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; color: #94a3b8;">
                         <div style="display: flex; flex-direction: column; gap: 4px;">
@@ -40,18 +70,85 @@ let deviceStatus = null;
                             <span style="font-size: 15px; color: #cbd5e1; font-weight: 500;">${status.rule_count} configured</span>
                         </div>
                     </div>
-                `
-                : `
-                    <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 16px;">
-                        <span class="status-badge disconnected"><i class="fas fa-times-circle"></i> Disconnected</span>
-                    </div>
-                    <div style="color: #94a3b8; line-height: 1.8;">
-                        <p><strong>No device connected or profile not configured</strong></p>
-                        <p style="margin-top: 10px; font-size: 14px; color: #64748b;">
-                            <i class="fas fa-info-circle"></i> Connect your phone via USB and enable File Transfer mode, or run <code>phone-sync --add-device</code>
+                `;
+            } else if (status.connected && !status.accessible) {
+                // Device connected but filesystem not accessible
+                statusHtml = warningBanner + `
+                    <div style="background: rgba(255, 107, 107, 0.15); border: 1.5px solid #ff6b6b; border-radius: var(--radius-card); padding: 16px;">
+                        <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px;">
+                            <i class="fas fa-exclamation-circle" style="color: #ff6b6b; font-size: 18px;"></i>
+                            <span style="color: #ff6b6b; font-weight: 600; font-size: 15px;">Device Connected But Not Accessible</span>
+                        </div>
+                        <p style="color: #cbd5e1; margin: 8px 0; font-size: 14px;">
+                            <strong>Device:</strong> ${status.device_name} (${status.profile_name})
                         </p>
+                        <p style="color: #94a3b8; margin: 8px 0 12px 0; font-size: 13px;">
+                            The device is detected but its filesystem cannot be accessed. This usually means:
+                        </p>
+                        <ul style="color: #94a3b8; margin: 8px 0 12px 16px; font-size: 13px;">
+                            <li>Phone is locked or in sleep mode</li>
+                            <li>USB connection is unstable</li>
+                            <li>Device needs to confirm "Allow access" prompt</li>
+                            <li>MTP drivers need to be reconnected</li>
+                        </ul>
+                        <p style="color: #94a3b8; margin: 8px 0 12px 0; font-size: 13px;">
+                            <strong>Try:</strong> Unlock your phone, check File Transfer mode is enabled, and reconnect the USB cable.
+                        </p>
+                        <div style="background: rgba(255, 107, 107, 0.25); border: 1px solid rgba(255, 107, 107, 0.5); border-radius: 4px; padding: 8px; margin-top: 8px; font-size: 12px; color: #ff6b6b;">
+                            <i class="fas fa-lock"></i> Rules are disabled until device becomes accessible
+                        </div>
                     </div>
                 `;
+            } else {
+                // Check for unregistered devices
+                try {
+                    const unregistered = await apiGet('/api/device/unregistered');
+                    if (unregistered.length > 0) {
+                        const device = unregistered[0];
+                        statusHtml = `
+                            <div style="background: rgba(255, 214, 153, 0.15); border: 1.5px solid var(--warning); border-radius: var(--radius-card); padding: 16px; margin-bottom: 16px;">
+                                <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px;">
+                                    <i class="fas fa-exclamation-triangle" style="color: var(--warning); font-size: 18px;"></i>
+                                    <span style="color: var(--warning); font-weight: 600; font-size: 15px;">Device Connected But Not Registered</span>
+                                </div>
+                                <p style="color: #cbd5e1; margin: 8px 0; font-size: 14px;">
+                                    <strong>Device:</strong> ${device.device_name}
+                                </p>
+                                <p style="color: #94a3b8; margin: 8px 0 12px 0; font-size: 13px;">
+                                    This device needs to be registered as a profile to use the sync tool.
+                                </p>
+                                <button onclick="openAddModalForDevice('${device.device_name}', '${device.mtp_id}', '${device.id_type}', '${device.id_value}')" class="btn btn-small" style="background: var(--warning); color: #1e293b;">
+                                    <i class="fas fa-plus"></i> Register Device
+                                </button>
+                            </div>
+                        `;
+                    } else {
+                        statusHtml = `
+                            <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 16px;">
+                                <span class="status-badge disconnected"><i class="fas fa-times-circle"></i> Disconnected</span>
+                            </div>
+                            <div style="color: #94a3b8; line-height: 1.8;">
+                                <p><strong>No device connected</strong></p>
+                                <p style="margin-top: 10px; font-size: 14px; color: #64748b;">
+                                    <i class="fas fa-info-circle"></i> Connect your phone via USB and enable File Transfer mode
+                                </p>
+                            </div>
+                        `;
+                    }
+                } catch (e) {
+                    statusHtml = `
+                        <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 16px;">
+                            <span class="status-badge disconnected"><i class="fas fa-times-circle"></i> Disconnected</span>
+                        </div>
+                        <div style="color: #94a3b8; line-height: 1.8;">
+                            <p><strong>No device connected or profile not configured</strong></p>
+                            <p style="margin-top: 10px; font-size: 14px; color: #64748b;">
+                                <i class="fas fa-info-circle"></i> Connect your phone via USB and enable File Transfer mode
+                            </p>
+                        </div>
+                    `;
+                }
+            }
             
             document.getElementById('device-status').innerHTML = statusHtml;
         } catch (error) {
