@@ -41,56 +41,93 @@ class ImprovedEdgeCaseTestSuite:
     
     def sanity_check(self) -> bool:
         """
-        TEST 0: SANITY CHECK - Verify device connection.
+        TEST 0: SANITY CHECK - Verify device connection AND filesystem access.
         
-        This test ensures we can actually communicate with the phone before
-        running all other tests. If this fails, it's a connection issue, not
-        a code issue.
+        Tests:
+        1. Device detection
+        2. MTP connection initialization
+        3. Filesystem access (can read directory listing)
+        4. Write access (can create test folder)
+        
+        All must pass for tests to proceed. If any fails, it's an environment
+        issue, not a code issue.
         """
         print("\n" + "="*70)
-        print("TEST 0: SANITY CHECK - Device Connection")
+        print("TEST 0: SANITY CHECK - Connection & Filesystem Access")
         print("="*70 + "\n")
         
         try:
+            # Step 1: Detect device
+            print("  1. Detecting device...")
             config = cfg.load_config()
             profile = runner.detect_connected_device(config, verbose=False)
             
             if not profile:
-                print("❌ SANITY CHECK FAILED: No device detected")
-                print("   Make sure phone is connected via USB in File Transfer mode")
+                print("     ❌ FAILED: No device detected")
+                print("     → Check: Phone connected via USB?")
+                print("     → Check: File Transfer mode enabled?")
                 self.results["failed"] += 1
                 return False
+            print("     ✓ Device detected")
             
+            # Step 2: Get connection info
+            print("  2. Checking connection URI...")
             device_info = profile.get("device", {})
             display_name = device_info.get("display_name", "Unknown")
             activation_uri = device_info.get("activation_uri", "")
             
             if not activation_uri:
-                print("❌ SANITY CHECK FAILED: Device URI not found")
+                print("     ❌ FAILED: No activation URI found")
                 self.results["failed"] += 1
                 return False
+            print(f"     ✓ Connected to: {display_name}")
             
-            # Try to initialize MTP device
+            # Step 3: Initialize MTP
+            print("  3. Initializing MTP connection...")
             self.mtp = MTPDevice(activation_uri)
             self.test_profile = profile
+            print("     ✓ MTP initialized")
             
-            # Try a simple operation to verify connection
+            # Step 4: Test READ access (list directory)
+            print("  4. Testing READ access (list directory)...")
             try:
-                test_list = self.mtp.list_dir("/")
-                print(f"✅ SANITY CHECK PASSED")
-                print(f"   Device: {display_name}")
-                print(f"   URI: {activation_uri[:50]}...")
-                print(f"   Can list root directory: ✓")
-                self.results["passed"] += 1
-                return True
+                root_contents = self.mtp.list_dir("/")
+                print(f"     ✓ Can read filesystem ({len(root_contents)} items in root)")
             except Exception as e:
-                print(f"❌ SANITY CHECK FAILED: Cannot communicate with device")
-                print(f"   Error: {e}")
+                print(f"     ❌ FAILED: Cannot read filesystem")
+                print(f"     → Error: {e}")
+                print("     → This means MTP connection exists but filesystem is inaccessible")
                 self.results["failed"] += 1
                 return False
+            
+            # Step 5: Test WRITE access (can create folder)
+            print("  5. Testing WRITE access (can create folder)...")
+            try:
+                test_folder = "Internal storage/sanity_check_test"
+                self.mtp.mkdir(test_folder)
+                # Try to list it to verify it was created
+                self.mtp.list_dir(test_folder)
+                # Clean up
+                self.mtp.remove_recursive(test_folder)
+                print(f"     ✓ Can write to filesystem")
+            except Exception as e:
+                print(f"     ❌ FAILED: Cannot write to filesystem")
+                print(f"     → Error: {e}")
+                print("     → This means READ works but WRITE doesn't")
+                print("     → Check: Phone permissions? Storage full? Read-only mode?")
+                self.results["failed"] += 1
+                return False
+            
+            # All checks passed
+            print(f"\n✅ SANITY CHECK PASSED - Ready to run tests")
+            print(f"   Device: {display_name}")
+            print(f"   Connection: ✓ Read Access: ✓ Write Access: ✓")
+            self.results["passed"] += 1
+            return True
         
         except Exception as e:
-            print(f"❌ SANITY CHECK FAILED: {e}")
+            print(f"❌ SANITY CHECK FAILED: Unexpected error")
+            print(f"   {e}")
             self.results["failed"] += 1
             return False
     
