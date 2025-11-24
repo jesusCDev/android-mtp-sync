@@ -301,6 +301,20 @@
         color: var(--info);
     }
     
+    /* Colored icons for phone and desktop - vibrant for dark mode visibility */
+    .fa-mobile-alt, .fa-mobile {
+        color: #60A5FA !important;  /* Bright blue for phone */
+    }
+    
+    .fa-desktop {
+        color: #10B981 !important;  /* Bright green for desktop */
+    }
+    
+    /* Arrow indicator styling */
+    .fa-arrow-down, .fa-arrow-right {
+        color: #8B5CF6 !important;  /* Purple for directional arrows */
+    }
+    
     .browser-footer {
         padding: 16px 24px;
         border-top: 1px solid var(--border-subtle);
@@ -339,4 +353,36 @@
         padding: 10px 16px;
         font-size: 13px;
         white-space: nowrap;
+    }
+    
+    /* Bookmark buttons */
+    .bookmark-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 12px;
+        background: rgba(139,92,246,0.1);
+        border: 1px solid rgba(139,92,246,0.3);
+        border-radius: var(--radius-pill);
+        color: var(--text);
+        font-size: 12px;
+        font-weight: 500;
+        cursor: pointer;
+        transition: all 170ms var(--easing);
+        white-space: nowrap;
+    }
+    
+    .bookmark-btn:hover {
+        background: rgba(139,92,246,0.2);
+        border-color: var(--accent);
+        transform: translateY(-1px);
+    }
+    
+    .bookmark-btn i.fa-times {
+        transition: all 170ms var(--easing);
+    }
+    
+    .bookmark-btn:hover i.fa-times {
+        opacity: 1 !important;
+        color: var(--danger);
     }

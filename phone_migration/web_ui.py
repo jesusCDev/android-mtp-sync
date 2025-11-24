@@ -45,8 +45,14 @@ current_run_status = {
 # History storage file path
 HISTORY_FILE = Path.home() / ".config" / "phone-migration" / "history.json"
 
+# Bookmarks storage file path
+BOOKMARKS_FILE = Path.home() / ".config" / "phone-migration" / "bookmarks.json"
+
 # History storage (persisted to disk)
 run_history = []
+
+# Bookmarks storage (persisted to disk)
+bookmarks = {"desktop": [], "phone": []}
 
 
 def load_history():
@@ -72,6 +78,36 @@ def save_history():
             json.dump(run_history, f, indent=2)
     except Exception as e:
         print(f"Warning: Failed to save history: {e}")
+
+
+def load_bookmarks():
+    """Load bookmarks from disk."""
+    global bookmarks
+    try:
+        if BOOKMARKS_FILE.exists():
+            with open(BOOKMARKS_FILE, 'r') as f:
+                bookmarks = json.load(f)
+                # Ensure structure is correct
+                if "desktop" not in bookmarks:
+                    bookmarks["desktop"] = []
+                if "phone" not in bookmarks:
+                    bookmarks["phone"] = []
+    except Exception as e:
+        print(f"Warning: Failed to load bookmarks: {e}")
+        bookmarks = {"desktop": [], "phone": []}
+
+
+def save_bookmarks():
+    """Save bookmarks to disk."""
+    try:
+        # Ensure directory exists
+        BOOKMARKS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        
+        # Write bookmarks to file
+        with open(BOOKMARKS_FILE, 'w') as f:
+            json.dump(bookmarks, f, indent=2)
+    except Exception as e:
+        print(f"Warning: Failed to save bookmarks: {e}")
 
 
 @app.route('/')
@@ -596,6 +632,22 @@ def api_browse_phone():
     if not activation_uri:
         return jsonify({"error": "Device activation URI not found"}), 500
     
+    # Resolve relative phone paths (sd/, internal/)
+    if phone_path.startswith('internal/'):
+        phone_path = '/storage/emulated/0/' + phone_path[len('internal/'):]
+    elif phone_path.startswith('sd/'):
+        # Find the first external SD card path
+        try:
+            sd_entries = browser.list_phone_directory(activation_uri, '/storage')
+            for entry in sd_entries:
+                # SD cards typically have names like 'XXXX-XXXX'
+                if entry['is_directory'] and '-' in entry['name'] and entry['name'] != 'emulated':
+                    phone_path = '/storage/' + entry['name'] + '/' + phone_path[len('sd/'):]
+                    break
+        except Exception:
+            # If we can't find SD card, use path as-is
+            pass
+    
     try:
         # Use browser.list_phone_directory to get contents
         entries_raw = browser.list_phone_directory(activation_uri, phone_path)
@@ -674,11 +726,15 @@ def api_browse_desktop():
             with os.scandir(resolved_path) as it:
                 for entry in it:
                     try:
-                        is_dir = entry.is_dir(follow_symlinks=False)
+                        # Check if it's a symlink first
+                        is_symlink = entry.is_symlink()
+                        # Follow symlinks when checking if it's a directory
+                        is_dir = entry.is_dir(follow_symlinks=True)
                         entries.append({
                             "name": entry.name,
                             "path": entry.path,
-                            "type": "dir" if is_dir else "file"
+                            "type": "dir" if is_dir else "file",
+                            "is_symlink": is_symlink
                         })
                     except (PermissionError, OSError):
                         # Skip entries we can't access
@@ -704,10 +760,77 @@ def api_browse_desktop():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route('/api/bookmarks/<bookmark_type>', methods=['GET'])
+def api_get_bookmarks(bookmark_type):
+    """Get bookmarks for desktop or phone."""
+    if bookmark_type not in ['desktop', 'phone']:
+        return jsonify({"error": "Invalid bookmark type. Use 'desktop' or 'phone'"}), 400
+    
+    return jsonify({
+        "bookmarks": bookmarks.get(bookmark_type, [])
+    })
+
+
+@app.route('/api/bookmarks/<bookmark_type>', methods=['POST'])
+def api_add_bookmark(bookmark_type):
+    """Add a new bookmark."""
+    if bookmark_type not in ['desktop', 'phone']:
+        return jsonify({"error": "Invalid bookmark type. Use 'desktop' or 'phone'"}), 400
+    
+    data = request.json
+    name = data.get('name', '').strip()
+    path = data.get('path', '').strip()
+    
+    if not name or not path:
+        return jsonify({"error": "Name and path are required"}), 400
+    
+    # For phone bookmarks, normalize to relative paths if possible
+    if bookmark_type == 'phone':
+        # Convert absolute phone paths to relative storage paths
+        if path.startswith('/storage/emulated/0/'):
+            path = 'internal/' + path[len('/storage/emulated/0/'):]
+        elif path.startswith('/storage/'):
+            # Extract SD card path (e.g., /storage/XXXX-XXXX/...)
+            parts = path.split('/', 3)
+            if len(parts) >= 3:
+                path = 'sd/' + (parts[3] if len(parts) > 3 else '')
+    
+    bookmark = {
+        "name": name,
+        "path": path
+    }
+    
+    # Check if bookmark already exists
+    for b in bookmarks[bookmark_type]:
+        if b["path"] == path:
+            return jsonify({"error": "Bookmark already exists"}), 409
+    
+    bookmarks[bookmark_type].append(bookmark)
+    save_bookmarks()
+    
+    return jsonify({"success": True, "bookmark": bookmark})
+
+
+@app.route('/api/bookmarks/<bookmark_type>/<int:index>', methods=['DELETE'])
+def api_delete_bookmark(bookmark_type, index):
+    """Delete a bookmark."""
+    if bookmark_type not in ['desktop', 'phone']:
+        return jsonify({"error": "Invalid bookmark type. Use 'desktop' or 'phone'"}), 400
+    
+    if index < 0 or index >= len(bookmarks[bookmark_type]):
+        return jsonify({"error": "Invalid bookmark index"}), 404
+    
+    removed = bookmarks[bookmark_type].pop(index)
+    save_bookmarks()
+    
+    return jsonify({"success": True, "removed": removed})
+
+
 def start_web_ui(host='127.0.0.1', port=8080, debug=False):
     """Start the web UI server."""
-    # Load history from disk on startup
+    # Load history and bookmarks from disk on startup
     load_history()
+    load_bookmarks()
     
     print(f"\n{'='*60}")
     print(f"📱 Phone Migration Tool - Web UI")
