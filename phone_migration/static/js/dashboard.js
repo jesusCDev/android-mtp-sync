@@ -228,6 +228,10 @@ let deviceStatus = null;
             parts.push('--notify');
         }
         
+        if (options.rename_duplicates) {
+            parts.push('--rename-duplicates');
+        }
+        
         // Add to HTML
         html += '<div class="command-line">';
         html += `<span class="command-prompt">$</span>`;
@@ -426,10 +430,17 @@ let deviceStatus = null;
         const dryRunOption = document.getElementById('dry-run-option');
         const notifyOption = document.getElementById('notify-option');
         const renameOption = document.getElementById('rename-duplicates-option');
+        const navLinks = document.querySelectorAll('.nav-link');
         
         // Disable all buttons and options
         runBtn.disabled = true;
         manualBtn.disabled = true;
+        
+        // Disable navigation
+        navLinks.forEach(link => {
+            link.style.pointerEvents = 'none';
+            link.style.opacity = '0.5';
+        });
         if (dryRunOption) {
             dryRunOption.style.pointerEvents = 'none';
             dryRunOption.style.opacity = '0.5';
@@ -471,12 +482,14 @@ let deviceStatus = null;
             });
             
             if (result.success) {
+                saveOperationState();
                 startPolling();
             } else {
                 throw new Error(result.error || 'Failed to start sync');
             }
         } catch (error) {
             updateRunStatus('error', 'Error: ' + error.message);
+            sessionStorage.removeItem('isRunning');
             resetRunButton();
         }
     }
@@ -501,6 +514,70 @@ let deviceStatus = null;
             icon.className = 'fas fa-times-circle';
             icon.style.color = 'var(--danger)';
             statusText.style.color = 'var(--danger)';
+        }
+    }
+    
+    function saveOperationState() {
+        // Save state to sessionStorage so it persists across tab switches/refreshes
+        sessionStorage.setItem('isRunning', isRunning.toString());
+        sessionStorage.setItem('operationType', selectedRuleIds.length > 0 ? 'manual' : 'auto');
+        sessionStorage.setItem('selectedRuleIds', JSON.stringify(selectedRuleIds));
+    }
+    
+    function restoreOperationState() {
+        // Check if an operation was running before page refresh
+        const wasRunning = sessionStorage.getItem('isRunning') === 'true';
+        if (wasRunning) {
+            isRunning = true;
+            const operationType = sessionStorage.getItem('operationType');
+            const savedRuleIds = sessionStorage.getItem('selectedRuleIds');
+            if (savedRuleIds) {
+                selectedRuleIds = JSON.parse(savedRuleIds);
+            }
+            
+            // Show appropriate UI state
+            document.getElementById('stats-card').style.display = 'block';
+            document.getElementById('output-card').style.display = 'block';
+            
+            if (operationType === 'manual') {
+                updateRunStatus('running', `Running ${selectedRuleIds.length} manual rule(s)...`);
+                document.getElementById('manual-btn').innerHTML = '<i class="fas fa-spinner fa-spin"></i> Running...';
+            } else {
+                updateRunStatus('running', 'Running auto rules...');
+                document.getElementById('run-btn').innerHTML = '<i class="fas fa-spinner fa-spin"></i> Running...';
+            }
+            
+            // Disable controls
+            const runBtn = document.getElementById('run-btn');
+            const manualBtn = document.getElementById('manual-btn');
+            const dryRunOption = document.getElementById('dry-run-option');
+            const notifyOption = document.getElementById('notify-option');
+            const renameOption = document.getElementById('rename-duplicates-option');
+            const navLinks = document.querySelectorAll('.nav-link');
+            
+            runBtn.disabled = true;
+            manualBtn.disabled = true;
+            
+            // Disable navigation
+            navLinks.forEach(link => {
+                link.style.pointerEvents = 'none';
+                link.style.opacity = '0.5';
+            });
+            if (dryRunOption) {
+                dryRunOption.style.pointerEvents = 'none';
+                dryRunOption.style.opacity = '0.5';
+            }
+            if (notifyOption) {
+                notifyOption.style.pointerEvents = 'none';
+                notifyOption.style.opacity = '0.5';
+            }
+            if (renameOption) {
+                renameOption.style.pointerEvents = 'none';
+                renameOption.style.opacity = '0.5';
+            }
+            
+            // Resume polling
+            startPolling();
         }
     }
     
@@ -539,6 +616,10 @@ let deviceStatus = null;
                     const hasErrors = status.stats && status.stats.errors > 0;
                     updateRunStatus(hasErrors ? 'error' : 'success', 
                                    hasErrors ? 'Completed with errors' : 'Completed successfully!');
+                    // Clear session state when operation completes
+                    sessionStorage.removeItem('isRunning');
+                    sessionStorage.removeItem('operationType');
+                    sessionStorage.removeItem('selectedRuleIds');
                     resetRunButton();
                 }
             } catch (error) {
@@ -704,10 +785,17 @@ let deviceStatus = null;
         const dryRunOption = document.getElementById('dry-run-option');
         const notifyOption = document.getElementById('notify-option');
         const renameOption = document.getElementById('rename-duplicates-option');
+        const navLinks = document.querySelectorAll('.nav-link');
         
         // Re-enable buttons and options
         runBtn.disabled = false;
         manualBtn.disabled = false;
+        
+        // Re-enable navigation
+        navLinks.forEach(link => {
+            link.style.pointerEvents = 'auto';
+            link.style.opacity = '1';
+        });
         if (dryRunOption) {
             dryRunOption.style.pointerEvents = 'auto';
             dryRunOption.style.opacity = '1';
@@ -838,10 +926,17 @@ let deviceStatus = null;
         const dryRunOption = document.getElementById('dry-run-option');
         const notifyOption = document.getElementById('notify-option');
         const renameOption = document.getElementById('rename-duplicates-option');
+        const navLinks = document.querySelectorAll('.nav-link');
         
         // Disable all buttons and options
         runBtn.disabled = true;
         manualBtn.disabled = true;
+        
+        // Disable navigation
+        navLinks.forEach(link => {
+            link.style.pointerEvents = 'none';
+            link.style.opacity = '0.5';
+        });
         if (dryRunOption) {
             dryRunOption.style.pointerEvents = 'none';
             dryRunOption.style.opacity = '0.5';
@@ -872,12 +967,14 @@ let deviceStatus = null;
             });
             
             if (result.success) {
+                saveOperationState();
                 startPolling();
             } else {
                 throw new Error(result.error || 'Failed to start sync');
             }
         } catch (error) {
             updateRunStatus('error', 'Error: ' + error.message);
+            sessionStorage.removeItem('isRunning');
             resetRunButton();
         }
     }
@@ -903,6 +1000,7 @@ let deviceStatus = null;
     // Load on page load
     loadDeviceStatus();
     updateCommandPreview(); // Initialize command preview
+    restoreOperationState(); // Restore state if page was refreshed during operation
     
     // Auto-refresh every 5 seconds
     setInterval(loadDeviceStatus, 5000);
