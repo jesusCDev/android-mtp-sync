@@ -120,29 +120,18 @@ def api_status():
         activation_uri = device_info.get("activation_uri", "")
         
         # Check device accessibility with a quick check
-        # Don't block too long - just verify device responds
+        # Use gio_info on the device root - faster than mounting
         accessible = False
         if activation_uri:
             try:
-                # Quick check: just try to mount, don't list files (can be slow)
-                # Use timeout to prevent hanging
-                import subprocess
-                import signal
-                
-                def timeout_handler(signum, frame):
-                    raise TimeoutError("Device check timeout")
-                
-                # Set 3 second timeout
-                signal.signal(signal.SIGALRM, timeout_handler)
-                signal.alarm(3)
-                try:
-                    subprocess.run(["gio", "mount", activation_uri], capture_output=True, timeout=2, check=False)
-                    # If mount succeeds, device is responsive
-                    accessible = True
-                finally:
-                    signal.alarm(0)  # Cancel alarm
-            except (TimeoutError, subprocess.TimeoutExpired, Exception):
-                # Timeout or error = not accessible
+                from . import gio_utils
+                # Quick check: try to get info on device root
+                # This is faster and more reliable than gio mount
+                info = gio_utils.gio_info(activation_uri, timeout=2)
+                # If we get any info back, device is accessible
+                accessible = bool(info)
+            except Exception:
+                # Any error = not accessible right now
                 accessible = False
         
         return jsonify({

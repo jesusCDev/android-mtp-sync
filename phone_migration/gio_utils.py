@@ -60,13 +60,14 @@ def gio_mount_list() -> str:
     return result.stdout
 
 
-def gio_info(location: str, attributes: Optional[List[str]] = None) -> Dict[str, str]:
+def gio_info(location: str, attributes: Optional[List[str]] = None, timeout: Optional[int] = None) -> Dict[str, str]:
     """
     Get file/directory information via 'gio info'.
     
     Args:
         location: URI or path to query
         attributes: List of attributes to query (default: all)
+        timeout: Timeout in seconds (default: None = no timeout)
     
     Returns:
         Dictionary of attribute:value pairs (empty dict if location doesn't exist)
@@ -94,7 +95,17 @@ def gio_info(location: str, attributes: Optional[List[str]] = None) -> Dict[str,
     
     args.append(location)
     
-    result = run(args, check=False)
+    try:
+        result = subprocess.run(
+            args,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=timeout
+        )
+    except subprocess.TimeoutExpired:
+        return {}  # Timeout = treat as inaccessible
+    
     if result.returncode != 0:
         return {}  # File doesn't exist or error occurred
     
