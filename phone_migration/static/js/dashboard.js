@@ -431,16 +431,9 @@ let deviceStatus = null;
         const notifyOption = document.getElementById('notify-option');
         const renameOption = document.getElementById('rename-duplicates-option');
         const navLinks = document.querySelectorAll('.nav-link');
-        const progressBar = document.getElementById('running-progress-bar');
-        const progressFill = document.getElementById('running-progress-fill');
         
-        // Show progress bar
-        if (progressBar) {
-            progressBar.style.display = 'block';
-            // Animate to 90% over 30 seconds
-            progressFill.style.transition = 'width 30s ease-out';
-            setTimeout(() => progressFill.style.width = '90%', 50);
-        }
+        // Show operation progress card
+        showOperationProgress('auto');
         
         // Disable all buttons and options
         runBtn.disabled = true;
@@ -517,6 +510,104 @@ let deviceStatus = null;
         }
     }
     
+    function showOperationProgress(type) {
+        const card = document.getElementById('operation-progress-card');
+        const statusText = document.getElementById('operation-status-text');
+        const rulesList = document.getElementById('rules-progress-list');
+        
+        if (!card) return;
+        
+        card.style.display = 'block';
+        
+        // Determine which rules to show
+        const rulesToShow = type === 'manual' && selectedRuleIds.length > 0
+            ? allRules.filter(r => selectedRuleIds.includes(r.id))
+            : allRules.filter(r => !r.manual_only);
+        
+        statusText.textContent = `Processing ${rulesToShow.length} rule${rulesToShow.length !== 1 ? 's' : ''}...`;
+        
+        // Build rules progress list
+        rulesList.innerHTML = rulesToShow.map((rule, index) => `
+            <div class="rule-progress-item pending" id="rule-progress-${rule.id}">
+                <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 8px;">
+                    <div class="rule-status-icon" style="width: 24px; height: 24px; display: flex; align-items: center; justify-content: center;">
+                        <i class="fas fa-clock" style="color: var(--text-muted);"></i>
+                    </div>
+                    <div style="flex: 1;">
+                        <div style="font-weight: 600; font-size: 14px; color: var(--text);">
+                            <span class="operation-mode ${rule.mode}" style="font-size: 11px; padding: 3px 8px; margin-right: 8px;">
+                                <i class="fas fa-${getModeIcon(rule.mode)}"></i> ${rule.mode.toUpperCase()}
+                            </span>
+                            ${rule.id}
+                        </div>
+                        <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+                            <i class="fas fa-mobile-alt" style="color: #0ea5e9;"></i> ${rule.phone_path}
+                            <i class="fas fa-arrow-right" style="margin: 0 6px; color: var(--text-muted);"></i>
+                            <i class="fas fa-desktop" style="color: #10b981;"></i> ${rule.desktop_path}
+                        </div>
+                    </div>
+                </div>
+                <div class="rule-progress-bar" style="display: none; height: 4px; background: rgba(255,255,255,0.1); border-radius: 2px; margin-top: 8px;">
+                    <div class="rule-progress-fill" style="height: 100%; width: 0%; background: linear-gradient(90deg, #0ea5e9, #10b981); border-radius: 2px; transition: width 0.3s ease;"></div>
+                </div>
+                <div class="rule-stats" style="display: none; margin-top: 8px; font-size: 12px; color: var(--text-muted);"></div>
+            </div>
+        `).join('');
+    }
+    
+    function updateRuleProgress(ruleId, status, stats) {
+        const item = document.getElementById(`rule-progress-${ruleId}`);
+        if (!item) return;
+        
+        const icon = item.querySelector('.rule-status-icon i');
+        const progressBar = item.querySelector('.rule-progress-bar');
+        const progressFill = item.querySelector('.rule-progress-fill');
+        const statsDiv = item.querySelector('.rule-stats');
+        
+        // Update status
+        item.className = `rule-progress-item ${status}`;
+        
+        if (status === 'running') {
+            icon.className = 'fas fa-sync fa-spin';
+            icon.style.color = '#0ea5e9';
+            if (progressBar) progressBar.style.display = 'block';
+        } else if (status === 'completed') {
+            icon.className = 'fas fa-check-circle';
+            icon.style.color = '#10b981';
+            if (progressFill) progressFill.style.width = '100%';
+        } else if (status === 'error') {
+            icon.className = 'fas fa-exclamation-circle';
+            icon.style.color = '#ef4444';
+        }
+        
+        // Update stats if provided
+        if (stats && statsDiv) {
+            const statItems = [];
+            if (stats.copied > 0) statItems.push(`✓ ${stats.copied} copied`);
+            if (stats.skipped > 0) statItems.push(`⏭ ${stats.skipped} skipped`);
+            if (stats.deleted > 0) statItems.push(`🗑 ${stats.deleted} deleted`);
+            if (statItems.length > 0) {
+                statsDiv.textContent = statItems.join(' • ');
+                statsDiv.style.display = 'block';
+            }
+        }
+        
+        // Update progress fill based on stats
+        if (stats && progressFill && stats.total) {
+            const progress = ((stats.copied || 0) + (stats.skipped || 0)) / stats.total * 100;
+            progressFill.style.width = Math.min(progress, 100) + '%';
+        }
+    }
+    
+    function hideOperationProgress() {
+        const card = document.getElementById('operation-progress-card');
+        if (card) {
+            setTimeout(() => {
+                card.style.display = 'none';
+            }, 2000); // Keep visible for 2 seconds after completion
+        }
+    }
+    
     function saveOperationState() {
         // Save state to sessionStorage so it persists across tab switches/refreshes
         sessionStorage.setItem('isRunning', isRunning.toString());
@@ -554,15 +645,9 @@ let deviceStatus = null;
             const notifyOption = document.getElementById('notify-option');
             const renameOption = document.getElementById('rename-duplicates-option');
             const navLinks = document.querySelectorAll('.nav-link');
-            const progressBar = document.getElementById('running-progress-bar');
-            const progressFill = document.getElementById('running-progress-fill');
             
-            // Show progress bar
-            if (progressBar) {
-                progressBar.style.display = 'block';
-                progressFill.style.transition = 'width 30s ease-out';
-                setTimeout(() => progressFill.style.width = '90%', 50);
-            }
+            // Show operation progress card
+            showOperationProgress(operationType);
             
             runBtn.disabled = true;
             manualBtn.disabled = true;
@@ -785,19 +870,9 @@ let deviceStatus = null;
         const notifyOption = document.getElementById('notify-option');
         const renameOption = document.getElementById('rename-duplicates-option');
         const navLinks = document.querySelectorAll('.nav-link');
-        const progressBar = document.getElementById('running-progress-bar');
-        const progressFill = document.getElementById('running-progress-fill');
         
-        // Complete and hide progress bar
-        if (progressBar && progressFill) {
-            progressFill.style.transition = 'width 0.3s ease-out';
-            progressFill.style.width = '100%';
-            setTimeout(() => {
-                progressBar.style.display = 'none';
-                progressFill.style.transition = 'none';
-                progressFill.style.width = '0%';
-            }, 400);
-        }
+        // Hide operation progress card after a delay
+        hideOperationProgress();
         
         // Re-enable buttons and options
         runBtn.disabled = false;
@@ -929,15 +1004,9 @@ let deviceStatus = null;
         const notifyOption = document.getElementById('notify-option');
         const renameOption = document.getElementById('rename-duplicates-option');
         const navLinks = document.querySelectorAll('.nav-link');
-        const progressBar = document.getElementById('running-progress-bar');
-        const progressFill = document.getElementById('running-progress-fill');
         
-        // Show progress bar
-        if (progressBar) {
-            progressBar.style.display = 'block';
-            progressFill.style.transition = 'width 30s ease-out';
-            setTimeout(() => progressFill.style.width = '90%', 50);
-        }
+        // Show operation progress card
+        showOperationProgress('manual');
         
         // Disable all buttons and options
         runBtn.disabled = true;
