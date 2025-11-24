@@ -19,12 +19,12 @@
                 <img src="{{ url_for('static', filename='img/logo.png') }}" alt="SyncDroid Logo" style="height: 48px; width: 48px; vertical-align: middle; margin-right: 12px;">
                 <span style="background: linear-gradient(135deg, #0ea5e9, #8b5cf6); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; font-weight: 700;">SyncDroid</span>
             </h1>
-            <nav>
-                <a href="/" {% if request.path == '/' %}class="active"{% endif %}><i class="fas fa-th-large"></i> Dashboard</a>
-                <a href="/profiles" {% if request.path == '/profiles' %}class="active"{% endif %}><i class="fas fa-user-circle"></i> Profiles</a>
-                <a href="/rules" {% if request.path == '/rules' %}class="active"{% endif %}><i class="fas fa-cog"></i> Rules</a>
-                <a href="/history" {% if request.path == '/history' %}class="active"{% endif %}><i class="fas fa-history"></i> History</a>
-                <a href="/documentation" {% if request.path == '/documentation' %}class="active"{% endif %}><i class="fas fa-book"></i> Documentation</a>
+            <nav id="main-nav">
+                <a href="/" {% if request.path == '/' %}class="active"{% endif %} class="nav-link"><i class="fas fa-th-large"></i> Dashboard</a>
+                <a href="/profiles" {% if request.path == '/profiles' %}class="active"{% endif %} class="nav-link"><i class="fas fa-user-circle"></i> Profiles</a>
+                <a href="/rules" {% if request.path == '/rules' %}class="active"{% endif %} class="nav-link"><i class="fas fa-cog"></i> Rules</a>
+                <a href="/history" {% if request.path == '/history' %}class="active"{% endif %} class="nav-link"><i class="fas fa-history"></i> History</a>
+                <a href="/documentation" {% if request.path == '/documentation' %}class="active"{% endif %} class="nav-link"><i class="fas fa-book"></i> Documentation</a>
             </nav>
         </div>
     </header>
