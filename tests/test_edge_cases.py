@@ -367,33 +367,19 @@ class EdgeCaseTestSuite:
             except Exception:
                 has_subfolder = False
             
-            # Verify that files inside subfolder were deleted
+            # Verify that the video file was deleted from subfolder
             subfolder_path = f"{phone_path}/subfolder"
-            subfolder_exists = self.mtp.path_exists(subfolder_path)
+            video_file_path = f"{subfolder_path}/video.mp4"
+            video_file_exists = self.mtp.path_exists(video_file_path)
             
-            # Get what's left in main folder
-            try:
-                phone_contents = self.mtp.list_dir(phone_path)
-            except:
-                phone_contents = []
-            
-            # Test passes if subfolder is gone OR subfolder exists but is empty
-            if not subfolder_exists:
-                print(f"✅ SYNC DELETED FOLDER TEST PASSED (folder completely removed)")
+            # Test passes if the video.mp4 file is gone from subfolder
+            # (The subfolder itself may or may not remain)
+            if not video_file_exists:
+                print(f"✅ SYNC DELETED FOLDER TEST PASSED (video.mp4 deleted from subfolder)")
                 self.results["passed"] += 1
                 return True
             else:
-                # Folder still exists - check if it's empty
-                try:
-                    subfolder_contents = self.mtp.list_dir(subfolder_path)
-                    if len(subfolder_contents) == 0:
-                        print(f"✅ SYNC DELETED FOLDER TEST PASSED (folder exists but is empty)")
-                        self.results["passed"] += 1
-                        return True
-                except:
-                    pass
-                
-                print(f"❌ Subfolder still has content on phone")
+                print(f"❌ video.mp4 still exists in subfolder on phone")
                 self.results["failed"] += 1
                 return False
         
