@@ -649,7 +649,8 @@ let deviceStatus = null;
                 continue;
             }
             
-                // Parse stats for current rule
+            // Parse stats for current rule
+            if (currentRuleId) {
                 const copiedMatch = line.match(/✓\s+Copied:\s*(\d+)/);
                 const skippedMatch = line.match(/⊙\s+Skipped:\s*(\d+)/);
                 const deletedMatch = line.match(/×\s+Deleted:\s*(\d+)/);
@@ -671,7 +672,6 @@ let deviceStatus = null;
                 } else if (Object.keys(currentStats).length > 0) {
                     // Update progress while running
                     updateRuleProgress(currentRuleId, 'running', currentStats);
-                }
                 }
             }
         }
