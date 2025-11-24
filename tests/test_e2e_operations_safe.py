@@ -394,15 +394,25 @@ class SafeTestSuite:
         
         try:
             print(f"Removing test folder from phone: {self.TEST_FOLDER}/...")
-            # Use rm -rf to remove directory recursively
-            import subprocess
-            # Build proper MTP URI
-            path_clean = self.TEST_FOLDER.lstrip('/')
-            if self.mtp.uri.endswith('/'):
-                full_uri = f"{self.mtp.uri}{path_clean}"
-            else:
-                full_uri = f"{self.mtp.uri}/{path_clean}"
-            subprocess.run(["gio", "remove", "-r", full_uri], check=False, capture_output=True)
+            # Recursively remove all files in test folder
+            def remove_recursive(path):
+                try:
+                    entries = self.mtp.list_dir(path)
+                    for entry in entries:
+                        entry_path = f"{path}/{entry}" if not path.endswith('/') else f"{path}{entry}"
+                        info = self.mtp.get_file_info(entry_path)
+                        entry_type = info.get('type', '')
+                        if 'directory' in entry_type.lower() or entry_type == '2':
+                            # Recurse into directory
+                            remove_recursive(entry_path)
+                        # Remove the item (file or now-empty directory)
+                        self.mtp.remove(entry_path)
+                except Exception as e:
+                    pass  # Ignore errors during recursive delete
+            
+            remove_recursive(self.TEST_FOLDER)
+            # Remove the root test folder
+            self.mtp.remove(self.TEST_FOLDER)
             print("✓ Phone cleaned up\n")
         except Exception as e:
             print(f"⚠ Warning during cleanup: {e}\n")

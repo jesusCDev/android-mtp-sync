@@ -22,7 +22,7 @@ class MTPDevice:
         return result.returncode, result.stdout, result.stderr
     
     def mkdir(self, path: str) -> None:
-        """Create directory on phone."""
+        """Create directory on phone. Silently ignores if directory already exists."""
         # Handle path properly - don't add extra slash
         path_clean = path.lstrip('/')
         if self.uri.endswith('/'):
@@ -30,7 +30,8 @@ class MTPDevice:
         else:
             full_uri = f"{self.uri}/{path_clean}"
         rc, _, err = self._run_gio("mkdir", "-p", full_uri)
-        if rc != 0:
+        # Ignore "already exists" errors
+        if rc != 0 and "already exists" not in err.lower() and "target file already exists" not in err.lower():
             raise RuntimeError(f"Failed to create {path}: {err}")
     
     def push_file(self, local_path: Path, phone_path: str) -> None:
