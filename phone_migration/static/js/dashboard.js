@@ -437,22 +437,12 @@ let deviceStatus = null;
         manualBtn.disabled = true;
         
         // Disable navigation
-        navLinks.forEach(link => {
-            link.style.pointerEvents = 'none';
-            link.style.opacity = '0.5';
-        });
-        if (dryRunOption) {
-            dryRunOption.style.pointerEvents = 'none';
-            dryRunOption.style.opacity = '0.5';
-        }
-        if (notifyOption) {
-            notifyOption.style.pointerEvents = 'none';
-            notifyOption.style.opacity = '0.5';
-        }
-        if (renameOption) {
-            renameOption.style.pointerEvents = 'none';
-            renameOption.style.opacity = '0.5';
-        }
+        navLinks.forEach(link => link.classList.add('disabled'));
+        
+        // Disable options with CSS class for smooth animation
+        if (dryRunOption) dryRunOption.classList.add('disabled');
+        if (notifyOption) notifyOption.classList.add('disabled');
+        if (renameOption) renameOption.classList.add('disabled');
         
         runBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Running...';
         
@@ -559,22 +549,12 @@ let deviceStatus = null;
             manualBtn.disabled = true;
             
             // Disable navigation
-            navLinks.forEach(link => {
-                link.style.pointerEvents = 'none';
-                link.style.opacity = '0.5';
-            });
-            if (dryRunOption) {
-                dryRunOption.style.pointerEvents = 'none';
-                dryRunOption.style.opacity = '0.5';
-            }
-            if (notifyOption) {
-                notifyOption.style.pointerEvents = 'none';
-                notifyOption.style.opacity = '0.5';
-            }
-            if (renameOption) {
-                renameOption.style.pointerEvents = 'none';
-                renameOption.style.opacity = '0.5';
-            }
+            navLinks.forEach(link => link.classList.add('disabled'));
+            
+            // Disable options with CSS class
+            if (dryRunOption) dryRunOption.classList.add('disabled');
+            if (notifyOption) notifyOption.classList.add('disabled');
+            if (renameOption) renameOption.classList.add('disabled');
             
             // Resume polling
             startPolling();
@@ -792,22 +772,12 @@ let deviceStatus = null;
         manualBtn.disabled = false;
         
         // Re-enable navigation
-        navLinks.forEach(link => {
-            link.style.pointerEvents = 'auto';
-            link.style.opacity = '1';
-        });
-        if (dryRunOption) {
-            dryRunOption.style.pointerEvents = 'auto';
-            dryRunOption.style.opacity = '1';
-        }
-        if (notifyOption) {
-            notifyOption.style.pointerEvents = 'auto';
-            notifyOption.style.opacity = '1';
-        }
-        if (renameOption) {
-            renameOption.style.pointerEvents = 'auto';
-            renameOption.style.opacity = '1';
-        }
+        navLinks.forEach(link => link.classList.remove('disabled'));
+        
+        // Re-enable options
+        if (dryRunOption) dryRunOption.classList.remove('disabled');
+        if (notifyOption) notifyOption.classList.remove('disabled');
+        if (renameOption) renameOption.classList.remove('disabled');
         
         runBtn.innerHTML = '<i class="fas fa-play"></i> Run All Rules';
         manualBtn.innerHTML = '<i class="fas fa-hand-paper"></i> Run Manual Rules';
@@ -933,22 +903,12 @@ let deviceStatus = null;
         manualBtn.disabled = true;
         
         // Disable navigation
-        navLinks.forEach(link => {
-            link.style.pointerEvents = 'none';
-            link.style.opacity = '0.5';
-        });
-        if (dryRunOption) {
-            dryRunOption.style.pointerEvents = 'none';
-            dryRunOption.style.opacity = '0.5';
-        }
-        if (notifyOption) {
-            notifyOption.style.pointerEvents = 'none';
-            notifyOption.style.opacity = '0.5';
-        }
-        if (renameOption) {
-            renameOption.style.pointerEvents = 'none';
-            renameOption.style.opacity = '0.5';
-        }
+        navLinks.forEach(link => link.classList.add('disabled'));
+        
+        // Disable options with CSS class
+        if (dryRunOption) dryRunOption.classList.add('disabled');
+        if (notifyOption) notifyOption.classList.add('disabled');
+        if (renameOption) renameOption.classList.add('disabled');
         
         manualBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Running...';
         
