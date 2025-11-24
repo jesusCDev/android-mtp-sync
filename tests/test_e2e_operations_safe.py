@@ -394,7 +394,15 @@ class SafeTestSuite:
         
         try:
             print(f"Removing test folder from phone: {self.TEST_FOLDER}/...")
-            self.mtp.remove(self.TEST_FOLDER)
+            # Use rm -rf to remove directory recursively
+            import subprocess
+            # Build proper MTP URI
+            path_clean = self.TEST_FOLDER.lstrip('/')
+            if self.mtp.uri.endswith('/'):
+                full_uri = f"{self.mtp.uri}{path_clean}"
+            else:
+                full_uri = f"{self.mtp.uri}/{path_clean}"
+            subprocess.run(["gio", "remove", "-r", full_uri], check=False, capture_output=True)
             print("✓ Phone cleaned up\n")
         except Exception as e:
             print(f"⚠ Warning during cleanup: {e}\n")
