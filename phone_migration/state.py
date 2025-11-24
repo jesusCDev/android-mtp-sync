@@ -2,13 +2,44 @@
 
 import json
 import os
+import fcntl
 from pathlib import Path
 from typing import Dict, List, Any, Set
 from datetime import datetime
+from contextlib import contextmanager
 
 # State file location
 STATE_DIR = Path.home() / ".local" / "share" / "phone-migration"
 STATE_FILE = STATE_DIR / "state.json"
+
+# Lock file for concurrent access protection
+LOCK_FILE = STATE_DIR / "state.lock"
+
+
+@contextmanager
+def _acquire_lock():
+    """Context manager for file-based locking (fcntl on POSIX systems).
+    
+    Ensures safe concurrent access to state.json. Blocks if another process
+    holds the lock.
+    """
+    _ensure_state_dir()
+    
+    # Open lock file (create if doesn't exist)
+    lock_file_handle = None
+    try:
+        lock_file_handle = open(LOCK_FILE, 'w')
+        # Acquire exclusive lock (blocks until available)
+        fcntl.flock(lock_file_handle.fileno(), fcntl.LOCK_EX)
+        yield
+    finally:
+        if lock_file_handle:
+            try:
+                # Release lock
+                fcntl.flock(lock_file_handle.fileno(), fcntl.LOCK_UN)
+                lock_file_handle.close()
+            except:
+                pass  # Ignore cleanup errors
 
 
 def _ensure_state_dir() -> None:
@@ -19,30 +50,30 @@ def _ensure_state_dir() -> None:
 def _load_state_file() -> Dict[str, Any]:
     """Load entire state file."""
     _ensure_state_dir()
-    if not STATE_FILE.exists():
-        return {}
-    
-    try:
-        with open(STATE_FILE, 'r') as f:
-            return json.load(f)
-    except (json.JSONDecodeError, IOError):
-        return {}
+    with _acquire_lock():
+        if not STATE_FILE.exists():
+            return {}
+        try:
+            with open(STATE_FILE, 'r') as f:
+                return json.load(f)
+        except (json.JSONDecodeError, IOError):
+            return {}
 
 
 def _save_state_file(state: Dict[str, Any]) -> None:
     """Save entire state file atomically."""
     _ensure_state_dir()
-    
-    # Write to temp file first, then rename (atomic on POSIX)
-    temp_file = STATE_FILE.with_suffix('.tmp')
-    try:
-        with open(temp_file, 'w') as f:
-            json.dump(state, f, indent=2)
-        temp_file.rename(STATE_FILE)
-    except Exception as e:
-        if temp_file.exists():
-            temp_file.unlink()
-        raise e
+    with _acquire_lock():
+        # Write to temp file first, then rename (atomic on POSIX)
+        temp_file = STATE_FILE.with_suffix('.tmp')
+        try:
+            with open(temp_file, 'w') as f:
+                json.dump(state, f, indent=2)
+            temp_file.rename(STATE_FILE)
+        except Exception as e:
+            if temp_file.exists():
+                temp_file.unlink()
+            raise e
 
 
 def load_rule_state(rule_id: str) -> Dict[str, Any]:

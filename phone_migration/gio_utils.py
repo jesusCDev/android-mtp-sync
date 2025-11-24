@@ -205,6 +205,13 @@ def gio_copy(src: str, dst: str, recursive: bool = False, overwrite: bool = Fals
     Returns:
         True if successful, False otherwise
     """
+    # Failure injection for testing (device disconnection simulation)
+    if FAILURE_INJECTOR.enabled and FAILURE_INJECTOR.fail_on_copy:
+        if FAILURE_INJECTOR.should_fail_operation():
+            if verbose:
+                print(f"  {Colors.RED}✗ Copy failed (simulated device disconnection){Colors.RESET}")
+            return False
+    
     if DRY_RUN:
         if verbose:  # Only print if verbose is True
             src_name = extract_filename(src)
