@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Dashboard - Phone Migration Tool{% endblock %}
+{% block title %}Dashboard - SyncDroid{% endblock %}
 
 {% block extra_styles %}
 <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard.css') }}">
@@ -60,19 +60,19 @@
         </div>
     </div>
     
-    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+    <!-- Command Preview Card - Always visible and dynamic -->
+    <div id="command-preview-card" style="margin-top: 16px; padding: 16px; background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.1); border-radius: var(--radius-card);">
+        <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px;"><i class="fas fa-terminal"></i> Command Preview</div>
+        <div id="command-preview-content"></div>
+    </div>
+    
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 16px;">
         <button id="run-btn" class="btn btn-success" onclick="startRun()" style="width: 100%;">
             <i class="fas fa-play"></i> Run All Rules
         </button>
         <button id="manual-btn" class="btn btn-secondary" onclick="openManualRulesModal()" style="width: 100%;">
             <i class="fas fa-hand-paper"></i> Run Manual Rules
         </button>
-    </div>
-    
-    <!-- Command Preview Card -->
-    <div id="command-preview-card" style="display: none; margin-top: 16px; padding: 16px; background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.1); border-radius: var(--radius-card);">
-        <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px;"><i class="fas fa-terminal"></i> Command Preview</div>
-        <div id="command-preview-content"></div>
     </div>
 </div>
 
@@ -99,6 +99,12 @@
             <i class="fas fa-spinner fa-spin" style="font-size: 24px;"></i>
             <div style="margin-top: 12px;">Loading manual rules...</div>
         </div>
+    </div>
+    
+    <!-- Manual Command Preview -->
+    <div id="manual-command-preview" style="display: none; margin-bottom: 16px; padding: 16px; background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.1); border-radius: var(--radius-card);">
+        <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px;"><i class="fas fa-terminal"></i> Command Preview</div>
+        <div id="manual-command-preview-content"></div>
     </div>
     
     <button id="run-selected-btn" class="btn btn-success" onclick="runSelectedManualRules()" style="width: 100%;">
