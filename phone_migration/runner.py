@@ -1,7 +1,7 @@
 """Runner to detect connected device and execute configured rules."""
 
 from typing import Any, Dict, Optional
-from . import device, config as cfg, operations, gio_utils, paths, notifications
+from . import device, config as cfg, operations, gio_utils, paths, notifications, preflight
 from .transfer_stats import TransferStats
 
 # ANSI color codes
@@ -208,6 +208,33 @@ def run_for_connected_device(config: Dict[str, Any], verbose: bool = False, dry_
     for i, rule in enumerate(rules, 1):
         rule_id = rule.get("id", f"rule-{i}")
         mode = rule.get("mode", "unknown")
+        
+        # Preflight checks (skip in dry-run mode)
+        if not dry_run:
+            try:
+                if mode in ["move", "copy", "backup"]:
+                    # These operations transfer from phone to desktop - check desktop space
+                    print(f"{Colors.DIM}[Preflight] Checking disk space for {mode} operation...{Colors.RESET}")
+                    if mode == "move":
+                        preflight.preflight_move(rule, device_info)
+                    elif mode == "copy":
+                        preflight.preflight_copy(rule, device_info)
+                    elif mode == "backup":
+                        preflight.preflight_backup(rule, device_info)
+                elif mode == "sync":
+                    # Sync transfers from desktop to phone - check phone space (best-effort)
+                    print(f"{Colors.DIM}[Preflight] Checking disk space for sync operation...{Colors.RESET}")
+                    preflight.preflight_sync(rule, device_info)
+            except preflight.PreflightError as e:
+                print(f"\n{Colors.RED}❌ Preflight check failed for rule {rule_id}:{Colors.RESET}")
+                print(f"{Colors.RED}{e}{Colors.RESET}\n")
+                print(f"{Colors.YELLOW}Skipping this rule. Free up space and try again.{Colors.RESET}")
+                total_stats["errors"] += 1
+                continue  # Skip this rule
+            except Exception as e:
+                # Don't fail on preflight errors in case estimation fails
+                print(f"{Colors.YELLOW}⚠ Warning: Preflight check failed: {e}{Colors.RESET}")
+                print(f"{Colors.DIM}Continuing anyway...{Colors.RESET}")
         
         try:
             if mode == "move":
