@@ -88,17 +88,33 @@ let currentProfile = null;
                                         </div>
                                         
                                         <div class="rule-paths">
-                                            <div class="rule-path">
-                                                <i class="fas fa-mobile-alt" style="color: var(--icon-idle); width: 16px;"></i>
-                                                <span>${rule.phone_path}</span>
-                                            </div>
-                                            <div class="rule-path" style="color: var(--text-muted); font-size: 13px;">
-                                                <i class="fas fa-arrow-down" style="width: 16px;"></i>
-                                            </div>
-                                            <div class="rule-path">
-                                                <i class="fas fa-desktop" style="color: var(--icon-idle); width: 16px;"></i>
-                                                <span>${rule.desktop_path.replace(/\/home\/[^\/]+/, '~')}</span>
-                                            </div>
+                                            ${rule.mode === 'sync' ? `
+                                                <!-- Sync: desktop → phone -->
+                                                <div class="rule-path">
+                                                    <i class="fas fa-desktop" style="color: var(--icon-idle); width: 16px;"></i>
+                                                    <span>${rule.desktop_path.replace(/\/home\/[^\/]+/, '~')}</span>
+                                                </div>
+                                                <div class="rule-path" style="color: var(--text-muted); font-size: 13px;">
+                                                    <i class="fas fa-arrow-right" style="width: 16px;"></i>
+                                                </div>
+                                                <div class="rule-path">
+                                                    <i class="fas fa-mobile-alt" style="color: var(--icon-idle); width: 16px;"></i>
+                                                    <span>${rule.phone_path}</span>
+                                                </div>
+                                            ` : `
+                                                <!-- Move/Copy/Backup: phone → desktop -->
+                                                <div class="rule-path">
+                                                    <i class="fas fa-mobile-alt" style="color: var(--icon-idle); width: 16px;"></i>
+                                                    <span>${rule.phone_path}</span>
+                                                </div>
+                                                <div class="rule-path" style="color: var(--text-muted); font-size: 13px;">
+                                                    <i class="fas fa-arrow-down" style="width: 16px;"></i>
+                                                </div>
+                                                <div class="rule-path">
+                                                    <i class="fas fa-desktop" style="color: var(--icon-idle); width: 16px;"></i>
+                                                    <span>${rule.desktop_path.replace(/\/home\/[^\/]+/, '~')}</span>
+                                                </div>
+                                            `}
                                         </div>
                                         
                                         <div class="rule-actions">
