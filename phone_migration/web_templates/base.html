@@ -6,7 +6,7 @@
     <title>{% block title %}Phone Migration Tool{% endblock %}</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700&family=Inconsolata:wght@400;600&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/main.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/main.css') }}?v={{ range(1, 10000) | random }}">
     {% block extra_styles %}{% endblock %}
 </head>
 <body>
@@ -29,7 +29,7 @@
         </div>
     </main>
     
-    <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/main.js') }}?v={{ range(1, 10000) | random }}"></script>
     {% block extra_scripts %}{% endblock %}
 </body>
 </html>
