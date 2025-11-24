@@ -608,23 +608,51 @@ def run_sync_rule(rule: Dict[str, Any], device: Dict[str, Any], verbose: bool = 
 
 
 def _sync_desktop_to_phone(src_dir: Path, dest_uri: str, rel_path: str,
-                           expected_files: Set[str], stats: Dict[str, int], verbose: bool, transfer_tracker=None, rename_duplicates: bool = True) -> None:
-    """Recursively sync desktop directory to phone (smart sync: skip unchanged files)."""
+                           expected_files: Set[str], stats: Dict[str, int], verbose: bool, transfer_tracker=None, rename_duplicates: bool = True, visited_inodes: Set[int] = None) -> None:
+    """Recursively sync desktop directory to phone (smart sync: skip unchanged files).
+    
+    Follows symlinks but guards against loops using visited inode set.
+    """
+    if visited_inodes is None:
+        visited_inodes = set()
+    
     if not src_dir.is_dir():
+        return
+    
+    # Guard against symlink loops
+    try:
+        inode = os.stat(src_dir).st_ino
+        if inode in visited_inodes:
+            return  # Already visited this directory
+        visited_inodes.add(inode)
+    except OSError:
         return
 
     for entry in src_dir.iterdir():
         entry_rel_path = f"{rel_path}/{entry.name}" if rel_path else entry.name
 
-        if entry.is_dir():
+        # Check if it's a symlink - resolve it
+        is_symlink = entry.is_symlink()
+        if is_symlink:
+            try:
+                # Resolve symlink to get the actual target
+                resolved = entry.resolve()
+                if not resolved.exists():
+                    continue  # Skip broken symlinks
+            except (OSError, RuntimeError):
+                continue  # Skip broken symlinks
+        else:
+            resolved = entry
+
+        if resolved.is_dir():
             # Create directory on phone
             sub_dest_uri = f"{dest_uri}/{entry.name}"
             gio_utils.gio_mkdir(sub_dest_uri, parents=True)
 
-            # Recurse
-            _sync_desktop_to_phone(entry, sub_dest_uri, entry_rel_path, expected_files, stats, verbose, transfer_tracker=transfer_tracker, rename_duplicates=rename_duplicates)
+            # Recurse (pass visited_inodes to track symlink loops)
+            _sync_desktop_to_phone(resolved, sub_dest_uri, entry_rel_path, expected_files, stats, verbose, transfer_tracker=transfer_tracker, rename_duplicates=rename_duplicates, visited_inodes=visited_inodes)
 
-        elif entry.is_file():
+        elif resolved.is_file():
             # Track this file as expected
             expected_files.add(entry_rel_path)
 
@@ -636,7 +664,7 @@ def _sync_desktop_to_phone(src_dir: Path, dest_uri: str, rel_path: str,
             if dest_info:
                 # File exists on phone - compare sizes
                 dest_size = gio_utils.get_file_size(dest_info)
-                src_size = entry.stat().st_size
+                src_size = resolved.stat().st_size
                 
                 if dest_size is not None and dest_size == src_size:
                     # File unchanged - skip copy
@@ -653,11 +681,11 @@ def _sync_desktop_to_phone(src_dir: Path, dest_uri: str, rel_path: str,
                     continue
             
             # File is new or changed - copy it
-            if gio_utils.gio_copy(str(entry), dest_file_uri, recursive=False, overwrite=True, verbose=verbose):
+            if gio_utils.gio_copy(str(resolved), dest_file_uri, recursive=False, overwrite=True, verbose=verbose):
                 stats["copied"] += 1
                 # Track transfer stats
                 if transfer_tracker:
-                    file_size = entry.stat().st_size
+                    file_size = resolved.stat().st_size
                     transfer_tracker.add_file(file_size)
             else:
                 stats["errors"] += 1
