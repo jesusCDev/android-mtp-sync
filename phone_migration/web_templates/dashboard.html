@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Dashboard - SyncDroid{% endblock %}
+{% block title %}SyncDroid - Dashboard{% endblock %}
 
 {% block extra_styles %}
 <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard.css') }}">
@@ -10,6 +10,11 @@
 {% endblock %}
 
 {% block content %}
+<!-- Running Progress Bar -->
+<div id="running-progress-bar" style="display: none; position: fixed; top: 0; left: 0; right: 0; height: 3px; background: rgba(0,0,0,0.3); z-index: 9999;">
+    <div id="running-progress-fill" style="height: 100%; width: 0%; background: linear-gradient(90deg, #0ea5e9, #8b5cf6, #0ea5e9); background-size: 200% 100%; animation: progressGradient 2s ease-in-out infinite;"></div>
+</div>
+
 <div class="card">
     <h2><i class="fas fa-mobile-alt"></i> Device Status</h2>
     <div id="device-status">

@@ -100,6 +100,12 @@ nav a.disabled {
     opacity: 0.4;
     pointer-events: none;
     filter: grayscale(0.5);
+    animation: navDisabledPulse 2s ease-in-out infinite;
+}
+
+@keyframes navDisabledPulse {
+    0%, 100% { opacity: 0.4; }
+    50% { opacity: 0.2; }
 }
 
 nav a:hover {
