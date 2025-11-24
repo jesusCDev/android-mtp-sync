@@ -157,6 +157,33 @@ phone-sync --add-device --name test --verbose
 cat ~/Programming/project-cli/phone-migration/config.json | jq .
 ```
 
+## Testing
+
+**IMPORTANT**: After making any updates to the main logic, always run tests to ensure everything works as expected.
+
+```bash
+# Run full test suite
+cd /mnt/port/Programming/projects/android-mtp-sync
+python3 tests/test_edge_cases.py
+```
+
+### Prerequisites for Testing
+- Phone connected via USB (File Transfer mode)
+- Phone unlocked during test execution
+- 2GB free space on both phone and desktop
+
+### Test Coverage
+The test suite covers 12 critical scenarios including:
+- Large file transfers (≥1GB)
+- Disk space validation
+- Symlink handling
+- Device disconnection safety
+- Concurrent operations
+- State corruption recovery
+- File permissions
+
+See `tests/docs/TESTING.md` for complete testing documentation.
+
 ## Integration with Warp AI
 
 You can ask Warp AI:
@@ -165,5 +192,6 @@ You can ask Warp AI:
 - "Show phone migration config"
 - "Add a new sync rule for Downloads folder"
 - "Dry run phone sync"
+- "Run phone migration tests"
 
 The AI will suggest the appropriate commands from this tool!

@@ -6,8 +6,11 @@ Automate file transfers between your Android phone and Linux desktop via MTP (Me
 
 - **Web UI**: Modern web interface for managing devices, rules, and running operations with a graphical folder browser
 - **Device Profiles**: Register your phone with a unique identifier to ensure operations run on the correct device
-- **Move Operation**: Copy files from phone to desktop, then delete them from phone (great for photos/videos)
-- **Sync Operation**: Mirror desktop folders to phone with desktop as source of truth (perfect for playlists, documents)
+- **Four Operation Modes**: Move, Copy, Backup, and Sync - each optimized for different use cases (see [docs/OPERATIONS.md](docs/OPERATIONS.md))
+  - **Move**: Copy from phone to desktop, then delete from phone (archive photos/videos)
+  - **Copy**: Copy from phone to desktop, keep on both (regular backups)
+  - **Backup**: Resumable copy with smart skip (large transfers, unstable connections)
+  - **Sync**: Mirror desktop to phone, desktop as source of truth (playlists, documents)
 - **Smart Sync**: Intelligently skips unchanged files by comparing file sizes (rsync-like behavior) - saves time and bandwidth
 - **Folder Browser**: Graphical folder picker for both phone (MTP) and desktop paths - no more guessing folder names!
 - **Conflict Handling**: Toggle between two strategies for duplicate files:
@@ -556,6 +559,20 @@ Each operation card includes an "Expand" button that opens a detailed modal show
    - Files marked for deletion
    - Files being skipped
    - Folders being created
+
+## Documentation
+
+### User Guides
+- **[docs/OPERATIONS.md](docs/OPERATIONS.md)** - Detailed guide to all four operation modes (Move, Copy, Backup, Sync) with examples and use cases
+- **[warp.md](warp.md)** - Quick reference for Warp Terminal users with common commands and workflows
+
+### Developer Documentation
+- **[tests/docs/TESTING.md](tests/docs/TESTING.md)** - Comprehensive testing guide with coverage details
+- **[tests/docs/EDGE_CASES_PRIORITY.md](tests/docs/EDGE_CASES_PRIORITY.md)** - Edge case scenarios and priority levels
+- **[CHANGELOG.md](CHANGELOG.md)** - Version history and changes
+
+### Archived Documentation
+- **[docs/archive/](docs/archive/)** - Historical documents and diagnostic reports
 
 ## Future Enhancements
 
