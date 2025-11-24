@@ -34,6 +34,40 @@ def extract_filename(uri_or_path: str) -> str:
 # Dry-run mode flag (set by runner)
 DRY_RUN = False
 
+# Failure injection for testing (device disconnection simulation)
+class FailureInjector:
+    """Simulate failures for testing (e.g. device disconnection)."""
+    
+    def __init__(self):
+        self.enabled = False
+        self.fail_on_copy = False
+        self.fail_on_list = False
+        self.fail_on_info = False
+        self.fail_after_count = None  # Fail after N operations
+        self._operation_count = 0
+    
+    def reset(self):
+        """Reset all failure settings."""
+        self.enabled = False
+        self.fail_on_copy = False
+        self.fail_on_list = False
+        self.fail_on_info = False
+        self.fail_after_count = None
+        self._operation_count = 0
+    
+    def should_fail_operation(self) -> bool:
+        """Check if current operation should fail."""
+        if not self.enabled:
+            return False
+        
+        if self.fail_after_count is not None:
+            self._operation_count += 1
+            return self._operation_count > self.fail_after_count
+        
+        return False
+
+FAILURE_INJECTOR = FailureInjector()
+
 
 def run(args: List[str], check: bool = True) -> subprocess.CompletedProcess:
     """

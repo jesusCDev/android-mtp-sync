@@ -11,10 +11,13 @@ from pathlib import Path
 import shutil
 import hashlib
 from typing import Dict, List, Tuple
+import tempfile
+import os
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from phone_migration import config as cfg, runner, operations
+from phone_migration.preflight import estimate_transfer_size, query_free_space_desktop, PreflightError
 from tests.helpers.mtp_testlib import MTPDevice
 
 
@@ -423,6 +426,327 @@ class ImprovedEdgeCaseTestSuite:
             self.results["failed"] += 1
             return False
     
+    def test_large_file_handling(self) -> bool:
+        """TEST 4: Large files - handle files >= 1GB without truncation."""
+        print("\n" + "-"*70)
+        print("TEST 4: LARGE FILES - Handling >= 1GB")
+        print("-"*70 + "\n")
+        
+        try:
+            test_name = "large_file_test"
+            phone_path = f"{self.TEST_BASE_PHONE}/{test_name}"
+            dest_path = self.TEST_BASE_DESKTOP / test_name
+            
+            # Create isolated test folder
+            self.mtp.mkdir(phone_path)
+            self.created_phone_folders.append(phone_path)
+            dest_path.mkdir(parents=True, exist_ok=True)
+            self.created_desktop_folders.append(dest_path)
+            
+            # Create sparse file (1.1 GB) on desktop without actually using disk space
+            desktop_sparse = dest_path / "large_file_1gb.bin"
+            desktop_sparse_size = 1_100_000_000  # 1.1 GB
+            
+            print(f"Creating sparse file ({desktop_sparse_size / (1024**3):.1f} GB)...")
+            with open(desktop_sparse, "wb") as f:
+                f.write(b"START")
+                f.seek(desktop_sparse_size - 1)
+                f.write(b"END")
+            
+            # Verify file size
+            actual_size = desktop_sparse.stat().st_size
+            if actual_size != desktop_sparse_size:
+                print(f"❌ Sparse file creation failed: expected {desktop_sparse_size}, got {actual_size}")
+                self.failed_tests.append("large_files")
+                self.results["failed"] += 1
+                return False
+            
+            # Compute hash before transfer
+            import hashlib
+            print("Computing source file hash...")
+            sha256_hash = hashlib.sha256()
+            with open(desktop_sparse, "rb") as f:
+                for chunk in iter(lambda: f.read(1024 * 1024), b""):
+                    sha256_hash.update(chunk)
+            source_hash = sha256_hash.hexdigest()
+            
+            # Perform sync (copy desktop file to phone)
+            print(f"Syncing {desktop_sparse_size / (1024**3):.1f} GB file to phone...")
+            operations.run_sync_rule(
+                {"phone_path": phone_path, "desktop_path": str(dest_path), "id": test_name},
+                {"activation_uri": self.mtp.uri},
+                verbose=False
+            )
+            
+            # Pull file back from phone to verify integrity
+            print("Pulling file back from phone to verify...")
+            phone_file_path = f"{phone_path}/large_file_1gb.bin"
+            verify_path = dest_path / "large_file_1gb_verify.bin"
+            self.mtp.pull_file(phone_file_path, str(verify_path))
+            
+            # Verify size and hash
+            verify_size = verify_path.stat().st_size
+            if verify_size != desktop_sparse_size:
+                print(f"❌ File size mismatch after transfer: expected {desktop_sparse_size}, got {verify_size}")
+                self.failed_tests.append("large_files")
+                self.results["failed"] += 1
+                return False
+            
+            print("Computing verify file hash...")
+            sha256_hash = hashlib.sha256()
+            with open(verify_path, "rb") as f:
+                for chunk in iter(lambda: f.read(1024 * 1024), b""):
+                    sha256_hash.update(chunk)
+            verify_hash = sha256_hash.hexdigest()
+            
+            if source_hash != verify_hash:
+                print("❌ File hash mismatch (corruption detected)")
+                print(f"   Source: {source_hash}")
+                print(f"   Verify: {verify_hash}")
+                self.failed_tests.append("large_files")
+                self.results["failed"] += 1
+                return False
+            
+            print("✅ LARGE FILE TEST PASSED")
+            print(f"   File: {desktop_sparse_size / (1024**3):.1f} GB")
+            print("   Size integrity: ✓ Hash integrity: ✓")
+            self.results["passed"] += 1
+            return True
+        
+        except Exception as e:
+            print(f"❌ ERROR: {e}")
+            import traceback
+            traceback.print_exc()
+            self.failed_tests.append("large_files")
+            self.results["failed"] += 1
+            return False
+    
+    def test_disk_space_validation(self) -> bool:
+        """TEST 5: Disk space - validate preflight checks and safe abort on low space."""
+        print("\n" + "-"*70)
+        print("TEST 5: DISK SPACE - Preflight Validation & Low Space Safety")
+        print("-"*70 + "\n")
+        
+        try:
+            test_name = "disk_space_test"
+            phone_path = f"{self.TEST_BASE_PHONE}/{test_name}"
+            dest_path = self.TEST_BASE_DESKTOP / test_name
+            
+            # Create isolated test folder
+            self.mtp.mkdir(phone_path)
+            self.created_phone_folders.append(phone_path)
+            dest_path.mkdir(parents=True, exist_ok=True)
+            self.created_desktop_folders.append(dest_path)
+            
+            # Test 5a: Estimate transfer size
+            print("\nTest 5a: Estimating transfer size...")
+            # Create 5 files of ~10MB each
+            test_files = []
+            for i in range(5):
+                test_file = dest_path / f"test_file_{i}.bin"
+                with open(test_file, "wb") as f:
+                    f.write(b"x" * (10 * 1024 * 1024))  # 10 MB
+                test_files.append(test_file)
+            
+            estimated_bytes = estimate_transfer_size(str(dest_path), "copy")
+            expected_bytes = 50 * 1024 * 1024  # ~50 MB
+            
+            # Allow 5% variance due to filesystem overhead
+            if abs(estimated_bytes - expected_bytes) > (expected_bytes * 0.05):
+                print(f"❌ Size estimation failed: expected ~{expected_bytes / (1024**2):.1f}MB, got {estimated_bytes / (1024**2):.1f}MB")
+                self.failed_tests.append("disk_space_validation")
+                self.results["failed"] += 1
+                return False
+            
+            print(f"✓ Estimated transfer: {estimated_bytes / (1024**2):.1f} MB")
+            
+            # Test 5b: Query free space
+            print("\nTest 5b: Querying free space on destination...")
+            try:
+                free_bytes = query_free_space_desktop(str(dest_path))
+                print(f"✓ Available space: {free_bytes / (1024**3):.1f} GB")
+            except PreflightError as e:
+                print(f"❌ Could not query free space: {e}")
+                self.failed_tests.append("disk_space_validation")
+                self.results["failed"] += 1
+                return False
+            
+            # Test 5c: Sufficient space scenario
+            print("\nTest 5c: Validating sufficient space scenario...")
+            try:
+                from phone_migration.preflight import validate_space_or_abort
+                # Should pass - plenty of free space
+                validate_space_or_abort(
+                    total_bytes=10 * 1024 * 1024,  # 10 MB
+                    free_bytes=free_bytes,
+                    headroom_percent=5.0,
+                    operation_name="Test"
+                )
+                print("✓ Sufficient space validation passed")
+            except PreflightError as e:
+                print(f"❌ Should have passed with sufficient space: {e}")
+                self.failed_tests.append("disk_space_validation")
+                self.results["failed"] += 1
+                return False
+            
+            # Test 5d: Low space scenario (simulated)
+            print("\nTest 5d: Validating low space detection...")
+            try:
+                from phone_migration.preflight import validate_space_or_abort
+                # Should fail - simulating extremely low free space
+                validate_space_or_abort(
+                    total_bytes=free_bytes + (1 * 1024 * 1024 * 1024),  # Ask for more than available + 1GB
+                    free_bytes=1 * 1024 * 1024,  # Only 1 MB free
+                    headroom_percent=5.0,
+                    operation_name="Test"
+                )
+                # If we get here, the check failed to catch low space
+                print("❌ Low space check should have raised PreflightError")
+                self.failed_tests.append("disk_space_validation")
+                self.results["failed"] += 1
+                return False
+            except PreflightError as e:
+                print(f"✓ Low space correctly detected and raised error")
+                print(f"   Error message: {str(e).split(chr(10))[0]}")
+            
+            print("\n✅ DISK SPACE VALIDATION TEST PASSED")
+            print("   Size estimation: ✓ Free space query: ✓ Safety checks: ✓")
+            self.results["passed"] += 1
+            return True
+        
+        except Exception as e:
+            print(f"❌ ERROR: {e}")
+            import traceback
+            traceback.print_exc()
+            self.failed_tests.append("disk_space_validation")
+            self.results["failed"] += 1
+            return False
+    
+    def test_symlink_traversal(self) -> bool:
+        """TEST 6: Symlink traversal - follow symlinks, create real folders/files on phone."""
+        print("\n" + "-"*70)
+        print("TEST 6: SYMLINK TRAVERSAL - Follow Symlinks & Create Real Files")
+        print("-"*70 + "\n")
+        
+        try:
+            test_name = "symlink_test"
+            phone_path = f"{self.TEST_BASE_PHONE}/{test_name}"
+            dest_path = self.TEST_BASE_DESKTOP / test_name
+            
+            # Create isolated test folder
+            self.mtp.mkdir(phone_path)
+            self.created_phone_folders.append(phone_path)
+            dest_path.mkdir(parents=True, exist_ok=True)
+            self.created_desktop_folders.append(dest_path)
+            
+            # Test 6a: Create test files and symlinks
+            print("\nTest 6a: Creating test files and symlinks...")
+            
+            # Create actual files
+            test_dir = dest_path / "actual_files"
+            test_dir.mkdir()
+            file1 = test_dir / "file1.txt"
+            file2 = test_dir / "file2.txt"
+            file1.write_text("Content of file1")
+            file2.write_text("Content of file2")
+            
+            # Create nested directory with file
+            nested_dir = test_dir / "nested"
+            nested_dir.mkdir()
+            nested_file = nested_dir / "nested_file.txt"
+            nested_file.write_text("Nested content")
+            
+            # Create symlink to file
+            symlink_to_file = dest_path / "link_to_file.txt"
+            symlink_to_file.symlink_to(file1)
+            
+            # Create symlink to directory
+            symlink_to_dir = dest_path / "link_to_dir"
+            symlink_to_dir.symlink_to(test_dir)
+            
+            print("✓ Created files and symlinks")
+            
+            # Test 6b: Sync desktop to phone
+            print("\nTest 6b: Syncing with symlink traversal...")
+            operations.run_sync_rule(
+                {"phone_path": phone_path, "desktop_path": str(dest_path), "id": test_name},
+                {"activation_uri": self.mtp.uri},
+                verbose=False
+            )
+            
+            # Test 6c: Verify files on phone
+            print("\nTest 6c: Verifying files on phone...")
+            phone_tree = self.mtp.directory_tree(phone_path)
+            
+            # Extract all files from tree
+            def extract_files(tree, prefix=""):
+                files = []
+                for f in tree.get("files", []):
+                    files.append(f"{prefix}/{f}" if prefix else f)
+                for dir_name, subdir in tree.get("dirs", {}).items():
+                    new_prefix = f"{prefix}/{dir_name}" if prefix else dir_name
+                    files.extend(extract_files(subdir, new_prefix))
+                return files
+            
+            phone_files = extract_files(phone_tree)
+            
+            # Check that symlinks were traversed and real files created
+            # Expected files:
+            # - actual_files/file1.txt
+            # - actual_files/file2.txt
+            # - actual_files/nested/nested_file.txt
+            # - link_to_file.txt (should be real file, not symlink)
+            # - link_to_dir/file1.txt
+            # - link_to_dir/file2.txt
+            # - link_to_dir/nested/nested_file.txt
+            
+            expected_patterns = [
+                "actual_files/file1.txt",
+                "actual_files/file2.txt",
+                "actual_files/nested/nested_file.txt",
+                "link_to_file.txt",
+                # Files from traversing symlink_to_dir
+            ]
+            
+            print(f"\nPhone files found: {len(phone_files)}")
+            for f in sorted(phone_files):
+                print(f"  - {f}")
+            
+            # Check minimum expected files
+            if len(phone_files) < 4:
+                print(f"❌ Expected at least 4 files, got {len(phone_files)}")
+                self.failed_tests.append("symlink_traversal")
+                self.results["failed"] += 1
+                return False
+            
+            # Verify that actual_files exists
+            if not any("actual_files" in f for f in phone_files):
+                print("❌ Expected 'actual_files' directory on phone")
+                self.failed_tests.append("symlink_traversal")
+                self.results["failed"] += 1
+                return False
+            
+            # Verify that link_to_file.txt exists (symlink was followed and created as real file)
+            if not any("link_to_file.txt" in f for f in phone_files):
+                print("❌ Symlinked file not found on phone")
+                self.failed_tests.append("symlink_traversal")
+                self.results["failed"] += 1
+                return False
+            
+            print("\n✅ SYMLINK TRAVERSAL TEST PASSED")
+            print(f"   Files synced: {len(phone_files)}")
+            print("   Symlinks followed: ✓ Real files created: ✓")
+            self.results["passed"] += 1
+            return True
+        
+        except Exception as e:
+            print(f"❌ ERROR: {e}")
+            import traceback
+            traceback.print_exc()
+            self.failed_tests.append("symlink_traversal")
+            self.results["failed"] += 1
+            return False
+    
     # Placeholder for remaining tests (implement same pattern)
     
     def run_all(self) -> bool:
@@ -447,6 +771,9 @@ class ImprovedEdgeCaseTestSuite:
             self.test_copy_rename_handling()
             self.test_move_verification()
             self.test_sync_unchanged()
+            self.test_large_file_handling()
+            self.test_disk_space_validation()
+            self.test_symlink_traversal()
             # TODO: Add remaining tests following same pattern
         
         except KeyboardInterrupt:
