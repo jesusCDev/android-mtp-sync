@@ -111,6 +111,37 @@ class MTPDevice:
         if rc != 0:
             raise RuntimeError(f"Failed to remove {path}: {err}")
     
+    def remove_recursive(self, path: str) -> None:
+        """Recursively remove directory and all contents from phone."""
+        # Get all items in directory
+        try:
+            entries = self.list_dir(path)
+        except:
+            # Directory doesn't exist, nothing to remove
+            return
+        
+        # Remove files and recurse into subdirectories
+        for entry in entries:
+            entry_path = f"{path}/{entry}".replace('//', '/')
+            info = self.get_file_info(entry_path)
+            entry_type = info.get('type', 'unknown')
+            
+            if 'directory' in entry_type.lower() or entry_type == '2':
+                # Recurse
+                self.remove_recursive(entry_path)
+            else:
+                # Remove file
+                try:
+                    self.remove(entry_path)
+                except:
+                    pass  # Continue even if file removal fails
+        
+        # Finally remove the directory itself
+        try:
+            self.remove(path)
+        except:
+            pass  # Directory might not be empty or other issues
+    
     def path_exists(self, path: str) -> bool:
         """Check if path exists on phone."""
         info = self.get_file_info(path)
