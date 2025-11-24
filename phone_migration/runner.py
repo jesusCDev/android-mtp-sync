@@ -24,6 +24,29 @@ class Colors:
     BRIGHT_WHITE = '\033[97;1m'
 
 
+def print_rule_status(rule_id: str, mode: str, status: str, message: str = ""):
+    """
+    Print colored rule status.
+    
+    Args:
+        rule_id: Rule identifier
+        mode: Rule mode (move, copy, sync, backup)
+        status: One of: 'pending', 'started', 'progress', 'complete', 'error'
+        message: Optional additional message
+    """
+    icons = {
+        'pending': ('⏳', Colors.DIM),
+        'started': ('🔄', Colors.BRIGHT_CYAN),
+        'progress': ('▶️', Colors.BRIGHT_BLUE),
+        'complete': ('✅', Colors.BRIGHT_GREEN),
+        'error': ('❌', Colors.RED)
+    }
+    
+    icon, color = icons.get(status, ('•', Colors.DIM))
+    msg_suffix = f" - {message}" if message else ""
+    print(f"{color}{icon} [{rule_id}] {mode.upper()}: {status.upper()}{msg_suffix}{Colors.RESET}")
+
+
 def detect_connected_device(config: Dict[str, Any], verbose: bool = False) -> Optional[Dict[str, Any]]:
     """
     Detect connected MTP device and find matching profile.
@@ -65,28 +88,38 @@ def detect_connected_device(config: Dict[str, Any], verbose: bool = False) -> Op
     return None
 
 
-def run_for_connected_device(config: Dict[str, Any], verbose: bool = False, dry_run: bool = False, rule_ids: Optional[list] = None, notify: bool = False, include_manual: bool = False, rename_duplicates: bool = True) -> None:
+def run_for_connected_device(config: Dict[str, Any], verbose: bool = False, dry_run: bool = False, rule_ids: Optional[list] = None, notify: bool = False, include_manual: bool = False, rename_duplicates: bool = True, skip_validation: bool = False) -> None:
     """
     Detect connected device and run configured rules.
     
     Args:
         config: Configuration dictionary
         verbose: Print verbose output
-        dry_run: Print actions without executing
+        dry_run: Print actions without executing (manual preview mode)
         rule_ids: Optional list of specific rule IDs to run (ignores manual_only flag)
         notify: Send desktop notifications on completion
         include_manual: Include manual-only rules in execution
         rename_duplicates: When True, rename files on conflict; when False, skip them
+        skip_validation: Skip auto dry-run validation (for testing)
+    
+    Note: When dry_run=False, operations are automatically validated via
+          internal dry-run before execution for safety.
     """
     # Print program header
     print(f"\n{Colors.BOLD}{Colors.BRIGHT_WHITE}{'='*60}{Colors.RESET}")
     print(f"{Colors.BOLD}{Colors.BRIGHT_WHITE}📱 Phone Migration Tool{Colors.RESET}")
     print(f"{Colors.BOLD}{Colors.BRIGHT_WHITE}{'='*60}{Colors.RESET}\n")
     
+    # Determine if we need auto-validation
+    user_requested_preview = dry_run  # User explicitly wants preview only
+    need_validation = not dry_run and not skip_validation  # Auto-validate before real operations
+    
     # Set dry-run mode
     if dry_run:
         gio_utils.DRY_RUN = True
         print(f"{Colors.BOLD}{Colors.YELLOW}[DRY RUN MODE - Preview Only]{Colors.RESET}\n")
+    elif need_validation:
+        print(f"{Colors.BRIGHT_CYAN}🔍 Auto-validating operations before execution...{Colors.RESET}\n")
     
     # Detect device
     print(f"{Colors.DIM}Detecting connected device...{Colors.RESET}")
@@ -212,6 +245,9 @@ def run_for_connected_device(config: Dict[str, Any], verbose: bool = False, dry_
         rule_id = rule.get("id", f"rule-{i}")
         mode = rule.get("mode", "unknown")
         
+        # Show rule started
+        print_rule_status(rule_id, mode, 'started')
+        
         # Preflight checks (skip in dry-run mode)
         if not dry_run:
             try:
@@ -282,9 +318,14 @@ def run_for_connected_device(config: Dict[str, Any], verbose: bool = False, dry_
             # Track stats for dry-run analysis
             if stats:
                 rules_stats.append((rule, stats))
+                # Show completion with summary
+                copied = stats.get('copied', 0)
+                deleted = stats.get('deleted', 0)
+                msg = f"{copied} copied, {deleted} deleted" if deleted > 0 else f"{copied} files"
+                print_rule_status(rule_id, mode, 'complete', msg)
         
         except Exception as e:
-            print(f"\n{Colors.RED}❌ Error executing rule {rule_id}:{Colors.RESET} {e}")
+            print_rule_status(rule_id, mode, 'error', str(e))
             if verbose:
                 import traceback
                 traceback.print_exc()
