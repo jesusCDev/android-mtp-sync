@@ -332,6 +332,82 @@ class ImprovedEdgeCaseTestSuite:
             self.results["failed"] += 1
             return False
     
+    def test_copy_no_rename_conflict(self) -> bool:
+        """TEST 1b: Copy with rename_duplicates=False - verify success with skipped conflicts."""
+        print("\n" + "-"*70)
+        print("TEST 1b: COPY - No Rename (Skip Conflicts)")
+        print("-"*70 + "\n")
+        
+        try:
+            test_name = "copy_test_no_rename"
+            phone_path = f"{self.TEST_BASE_PHONE}/{test_name}"
+            dest_path = self.TEST_BASE_DESKTOP / test_name
+            
+            # Create test setup
+            self.mtp.mkdir(phone_path)
+            self.created_phone_folders.append(phone_path)
+            dest_path.mkdir(parents=True, exist_ok=True)
+            self.created_desktop_folders.append(dest_path)
+            
+            print("\nTest 1b-a: First copy (baseline)...")
+            # Push initial files to phone
+            videos_dir = Path(__file__).parent / "videos"
+            videos = list(videos_dir.glob("*.mp4"))[:2]
+            for i, vid in enumerate(videos):
+                self.mtp.push_file(vid, f"{phone_path}/file_{i}.mp4")
+            
+            # First copy with rename_duplicates=True (should work)
+            stats1 = operations.run_copy_rule(
+                {"phone_path": phone_path, "desktop_path": str(dest_path), "id": test_name},
+                {"activation_uri": self.mtp.uri},
+                verbose=False,
+                rename_duplicates=True  # Allow renaming
+            )
+            print(f"✓ First copy: {stats1['copied']} files copied")
+            initial_files = list(dest_path.rglob("*"))
+            print(f"✓ Desktop has {len([f for f in initial_files if f.is_file()])} files")
+            
+            print("\nTest 1b-b: Second copy with rename_duplicates=False (skip conflicts)...")
+            # Second copy with rename_duplicates=False (should skip duplicates)
+            stats2 = operations.run_copy_rule(
+                {"phone_path": phone_path, "desktop_path": str(dest_path), "id": test_name},
+                {"activation_uri": self.mtp.uri},
+                verbose=False,
+                rename_duplicates=False  # Skip conflicts
+            )
+            print(f"✓ Second copy: {stats2['copied']} new files, {stats2['skipped']} skipped (conflicts)")
+            print(f"   Errors: {stats2['errors']}")
+            
+            # Verify behavior
+            final_files = list(dest_path.rglob("*"))
+            final_file_count = len([f for f in final_files if f.is_file()])
+            initial_file_count = len([f for f in initial_files if f.is_file()])
+            
+            print(f"\nTest 1b-c: Verifying result...")
+            print(f"✓ Desktop still has {final_file_count} files (no new files added due to conflicts)")
+            
+            # Success criteria: Operation should report success (no errors) even though files were skipped
+            if stats2['errors'] == 0 and final_file_count == initial_file_count:
+                print(f"\n✅ COPY NO-RENAME TEST PASSED")
+                print(f"   Skipped conflicts correctly: {stats2['skipped']} files")
+                print(f"   Operation reported success despite skipped files")
+                self.results["passed"] += 1
+                return True
+            else:
+                print(f"\n❌ Expected no errors and no new files")
+                print(f"   Errors: {stats2['errors']}, New files added: {final_file_count - initial_file_count}")
+                self.failed_tests.append("copy_no_rename")
+                self.results["failed"] += 1
+                return False
+        
+        except Exception as e:
+            print(f"❌ ERROR: {e}")
+            import traceback
+            traceback.print_exc()
+            self.failed_tests.append("copy_no_rename")
+            self.results["failed"] += 1
+            return False
+    
     def test_move_verification(self) -> bool:
         """TEST 2: Move - verify copy before deletion."""
         print("\n" + "-"*70)
@@ -1148,6 +1224,7 @@ class ImprovedEdgeCaseTestSuite:
         # Run tests
         try:
             self.test_copy_rename_handling()
+            self.test_copy_no_rename_conflict()
             self.test_move_verification()
             self.test_sync_unchanged()
             self.test_large_file_handling()
