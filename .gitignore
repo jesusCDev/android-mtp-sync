@@ -45,3 +45,8 @@ htmlcov/
 # Project specific
 config.json
 *.log
+
+# Test files
+tests/videos/*.mp4
+tests/videos/*.mkv
+tests/videos/*.avi
