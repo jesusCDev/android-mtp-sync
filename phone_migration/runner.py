@@ -1,7 +1,7 @@
 """Runner to detect connected device and execute configured rules."""
 
 from typing import Any, Dict, Optional, List, Tuple
-from . import device, config as cfg, operations, gio_utils, paths, notifications, preflight, dry_run_analyzer
+from . import device, config as cfg, operations, gio_utils, paths, notifications, preflight, dry_run_analyzer, progress
 from .transfer_stats import TransferStats
 
 # ANSI color codes
@@ -241,12 +241,16 @@ def run_for_connected_device(config: Dict[str, Any], verbose: bool = False, dry_
     transfer_tracker.start()
     total_stats["transfer_stats"] = transfer_tracker
     
+    # Overall progress tracker
+    overall_progress = progress.OperationProgress(len(rules))
+    
     for i, rule in enumerate(rules, 1):
         rule_id = rule.get("id", f"rule-{i}")
         mode = rule.get("mode", "unknown")
         
-        # Show rule started
-        print_rule_status(rule_id, mode, 'started')
+        # Initialize rule progress tracker
+        rule_progress = progress.RuleProgress(rule_id, mode, len(rules), i)
+        rule_progress.start()
         
         # Preflight checks (skip in dry-run mode)
         if not dry_run:
@@ -321,11 +325,18 @@ def run_for_connected_device(config: Dict[str, Any], verbose: bool = False, dry_
                 # Show completion with summary
                 copied = stats.get('copied', 0)
                 deleted = stats.get('deleted', 0)
-                msg = f"{copied} copied, {deleted} deleted" if deleted > 0 else f"{copied} files"
-                print_rule_status(rule_id, mode, 'complete', msg)
+                folders = stats.get('folders', 0)
+                msg = f"{copied} files"
+                if deleted > 0:
+                    msg += f", {deleted} deleted"
+                if folders > 0:
+                    msg += f", {folders} folders"
+                rule_progress.stop(success=True, summary=msg)
+                overall_progress.update()
         
         except Exception as e:
-            print_rule_status(rule_id, mode, 'error', str(e))
+            rule_progress.stop(success=False, summary=str(e))
+            overall_progress.update()
             if verbose:
                 import traceback
                 traceback.print_exc()
