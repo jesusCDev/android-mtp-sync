@@ -449,7 +449,7 @@ let deviceStatus = null;
         
         runBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Running...';
         
-        // Clear previous results immediately
+        // Clear previous results
         document.getElementById('stats-card').style.display = 'none';
         document.getElementById('output-card').style.display = 'none';
         document.getElementById('stat-copied').textContent = '0';
@@ -457,15 +457,13 @@ let deviceStatus = null;
         document.getElementById('stat-deleted').textContent = '0';
         document.getElementById('stat-errors').textContent = '0';
         document.getElementById('smart-copy-progress').style.display = 'none';
+        document.getElementById('operations-container').innerHTML = '';
+        displayedOperations.clear();
         
         // Command preview already showing and updated
         
         updateRunStatus('running', 'Running auto rules...');
         document.getElementById('manual-selection-card').style.display = 'none';
-        document.getElementById('stats-card').style.display = 'block';
-        document.getElementById('output-card').style.display = 'block';
-        document.getElementById('operations-container').innerHTML = '';
-        displayedOperations.clear();
         
         try {
             const result = await apiPost('/api/run', {
@@ -602,9 +600,7 @@ let deviceStatus = null;
     function hideOperationProgress() {
         const card = document.getElementById('operation-progress-card');
         if (card) {
-            setTimeout(() => {
-                card.style.display = 'none';
-            }, 2000); // Keep visible for 2 seconds after completion
+            card.style.display = 'none';
         }
     }
     
@@ -653,8 +649,7 @@ let deviceStatus = null;
                 continue;
             }
             
-            // Parse stats for current rule
-            if (currentRuleId) {
+                // Parse stats for current rule
                 const copiedMatch = line.match(/✓\s+Copied:\s*(\d+)/);
                 const skippedMatch = line.match(/⊙\s+Skipped:\s*(\d+)/);
                 const deletedMatch = line.match(/×\s+Deleted:\s*(\d+)/);
@@ -665,15 +660,18 @@ let deviceStatus = null;
                 if (deletedMatch) currentStats.deleted = parseInt(deletedMatch[1]);
                 if (syncedMatch) currentStats.synced = parseInt(syncedMatch[1]);
                 
-                // Update progress if we have stats
-                if (Object.keys(currentStats).length > 0) {
-                    updateRuleProgress(currentRuleId, 'running', currentStats);
-                }
+                // Detect completion - any summary line with stats means rule finished
+                const isSummaryLine = line.match(/^[✓⊙×]\s+(Copied|Synced|Skipped):/i) && Object.keys(currentStats).length > 0;
                 
-                // Detect completion
-                if (line.match(/^✓.*completed|^✓.*finished/i)) {
+                if (isSummaryLine) {
+                    // This rule is done - mark as completed
                     updateRuleProgress(currentRuleId, 'completed', currentStats);
                     currentRuleId = null;
+                    currentStats = {};
+                } else if (Object.keys(currentStats).length > 0) {
+                    // Update progress while running
+                    updateRuleProgress(currentRuleId, 'running', currentStats);
+                }
                 }
             }
         }
@@ -772,6 +770,11 @@ let deviceStatus = null;
                     const hasErrors = status.stats && status.stats.errors > 0;
                     updateRunStatus(hasErrors ? 'error' : 'success', 
                                    hasErrors ? 'Completed with errors' : 'Completed successfully!');
+                    
+                    // NOW show stats and operations after completion
+                    document.getElementById('stats-card').style.display = 'block';
+                    document.getElementById('output-card').style.display = 'block';
+                    
                     // Clear session state when operation completes
                     sessionStorage.removeItem('isRunning');
                     sessionStorage.removeItem('operationType');
@@ -1059,7 +1062,7 @@ let deviceStatus = null;
             return;
         }
         
-        // Clear previous results immediately
+        // Clear previous results
         document.getElementById('stats-card').style.display = 'none';
         document.getElementById('output-card').style.display = 'none';
         document.getElementById('stat-copied').textContent = '0';
@@ -1067,6 +1070,8 @@ let deviceStatus = null;
         document.getElementById('stat-deleted').textContent = '0';
         document.getElementById('stat-errors').textContent = '0';
         document.getElementById('smart-copy-progress').style.display = 'none';
+        document.getElementById('operations-container').innerHTML = '';
+        displayedOperations.clear();
         
         // Run with specific rule IDs
         isRunning = true;
@@ -1095,10 +1100,6 @@ let deviceStatus = null;
         manualBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Running...';
         
         updateRunStatus('running', `Running ${selectedRuleIds.length} manual rule(s)...`);
-        document.getElementById('stats-card').style.display = 'block';
-        document.getElementById('output-card').style.display = 'block';
-        document.getElementById('operations-container').innerHTML = '';
-        displayedOperations.clear();
         
         try {
             const result = await apiPost('/api/run', {
