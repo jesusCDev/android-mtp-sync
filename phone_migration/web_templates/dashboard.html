@@ -10,9 +10,16 @@
 {% endblock %}
 
 {% block content %}
-<!-- Running Progress Bar -->
-<div id="running-progress-bar" style="display: none; position: fixed; top: 0; left: 0; right: 0; height: 3px; background: rgba(0,0,0,0.3); z-index: 9999;">
-    <div id="running-progress-fill" style="height: 100%; width: 0%; background: linear-gradient(90deg, #0ea5e9, #8b5cf6, #0ea5e9); background-size: 200% 100%; animation: progressGradient 2s ease-in-out infinite;"></div>
+<!-- Operation Progress Card -->
+<div id="operation-progress-card" class="card" style="display: none; border: 2px solid #0ea5e9; background: linear-gradient(135deg, rgba(14, 165, 233, 0.1) 0%, rgba(139, 92, 246, 0.1) 100%);">
+    <div style="display: flex; align-items: center; gap: 16px; margin-bottom: 20px;">
+        <div class="spinner-large"></div>
+        <div>
+            <h2 style="margin: 0 0 8px 0; color: #0ea5e9;"><i class="fas fa-sync fa-spin"></i> Operation In Progress</h2>
+            <div id="operation-status-text" style="color: var(--text-muted); font-size: 14px;">Initializing...</div>
+        </div>
+    </div>
+    <div id="rules-progress-list"></div>
 </div>
 
 <div class="card">
