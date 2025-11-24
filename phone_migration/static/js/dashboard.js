@@ -608,6 +608,77 @@ let deviceStatus = null;
         }
     }
     
+    function updateProgressFromLogs(logs) {
+        const fullLog = logs.join('\n');
+        const phaseText = document.getElementById('operation-phase-text');
+        
+        // Detect phases
+        if (fullLog.includes('[DRY RUN MODE]') || fullLog.includes('DRY RUN')) {
+            if (phaseText) phaseText.textContent = 'Dry Run - Safety Check';
+        } else if (fullLog.includes('Analyzing dry-run') || fullLog.includes('Safety check')) {
+            if (phaseText) phaseText.textContent = 'Safety Analysis';
+        } else if (fullLog.includes('All safety checks passed')) {
+            if (phaseText) phaseText.textContent = 'Executing Operations';
+        }
+        
+        const lines = fullLog.split('\n');
+        let currentRuleId = null;
+        let currentMode = null;
+        let currentStats = {};
+        
+        for (let line of lines) {
+            line = line.trim();
+            
+            // Detect rule start: "Move: /path/to/source → /path/to/dest"
+            const opMatch = line.match(/^[\p{Emoji}\u2192🔄-]*\s*(Move|Copy|Smart Copy|Sync|Backup):\s*(.+?)\s*[→\->=>]+\s*(.+)$/u);
+            if (opMatch) {
+                const [_, mode, source, dest] = opMatch;
+                currentMode = mode.trim();
+                
+                // Try to match this to a rule ID by comparing paths
+                // This is a best-effort approach
+                if (allRules && allRules.length > 0) {
+                    for (const rule of allRules) {
+                        if (rule.mode.toLowerCase().replace(' ', '_') === currentMode.toLowerCase().replace(' ', '_')) {
+                            // Simple path matching - could be improved
+                            if (source.includes(rule.phone_path) || dest.includes(rule.desktop_path)) {
+                                currentRuleId = rule.id;
+                                updateRuleProgress(currentRuleId, 'running', currentStats);
+                                break;
+                            }
+                        }
+                    }
+                }
+                currentStats = {};
+                continue;
+            }
+            
+            // Parse stats for current rule
+            if (currentRuleId) {
+                const copiedMatch = line.match(/✓\s+Copied:\s*(\d+)/);
+                const skippedMatch = line.match(/⊙\s+Skipped:\s*(\d+)/);
+                const deletedMatch = line.match(/×\s+Deleted:\s*(\d+)/);
+                const syncedMatch = line.match(/✓\s+Synced:\s*(\d+)/);
+                
+                if (copiedMatch) currentStats.copied = parseInt(copiedMatch[1]);
+                if (skippedMatch) currentStats.skipped = parseInt(skippedMatch[1]);
+                if (deletedMatch) currentStats.deleted = parseInt(deletedMatch[1]);
+                if (syncedMatch) currentStats.synced = parseInt(syncedMatch[1]);
+                
+                // Update progress if we have stats
+                if (Object.keys(currentStats).length > 0) {
+                    updateRuleProgress(currentRuleId, 'running', currentStats);
+                }
+                
+                // Detect completion
+                if (line.match(/^✓.*completed|^✓.*finished/i)) {
+                    updateRuleProgress(currentRuleId, 'completed', currentStats);
+                    currentRuleId = null;
+                }
+            }
+        }
+    }
+    
     function saveOperationState() {
         // Save state to sessionStorage so it persists across tab switches/refreshes
         sessionStorage.setItem('isRunning', isRunning.toString());
@@ -693,6 +764,7 @@ let deviceStatus = null;
                 
                 if (status.logs && status.logs.length > 0) {
                     parseAndDisplayOperations(status.logs);
+                    updateProgressFromLogs(status.logs);
                 }
                 
                 if (!status.running && isRunning) {

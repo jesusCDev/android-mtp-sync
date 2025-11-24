@@ -10,18 +10,6 @@
 {% endblock %}
 
 {% block content %}
-<!-- Operation Progress Card -->
-<div id="operation-progress-card" class="card" style="display: none; border: 2px solid #0ea5e9; background: linear-gradient(135deg, rgba(14, 165, 233, 0.1) 0%, rgba(139, 92, 246, 0.1) 100%);">
-    <div style="display: flex; align-items: center; gap: 16px; margin-bottom: 20px;">
-        <div class="spinner-large"></div>
-        <div>
-            <h2 style="margin: 0 0 8px 0; color: #0ea5e9;"><i class="fas fa-sync fa-spin"></i> Operation In Progress</h2>
-            <div id="operation-status-text" style="color: var(--text-muted); font-size: 14px;">Initializing...</div>
-        </div>
-    </div>
-    <div id="rules-progress-list"></div>
-</div>
-
 <div class="card">
     <h2><i class="fas fa-mobile-alt"></i> Device Status</h2>
     <div id="device-status">
@@ -158,6 +146,18 @@
 <div class="card" id="output-card" style="display: none;">
     <h2><i class="fas fa-list-alt"></i> Operations</h2>
     <div id="operations-container"></div>
+</div>
+
+<!-- Operation Progress Card (at bottom) -->
+<div id="operation-progress-card" class="card" style="display: none; border: 2px solid #0ea5e9; background: linear-gradient(135deg, rgba(14, 165, 233, 0.1) 0%, rgba(139, 92, 246, 0.1) 100%);">
+    <div style="display: flex; align-items: center; gap: 16px; margin-bottom: 20px;">
+        <div class="spinner-large"></div>
+        <div>
+            <h2 style="margin: 0 0 8px 0; color: #0ea5e9;"><i class="fas fa-sync fa-spin"></i> <span id="operation-phase-text">Operation In Progress</span></h2>
+            <div id="operation-status-text" style="color: var(--text-muted); font-size: 14px;">Initializing...</div>
+        </div>
+    </div>
+    <div id="rules-progress-list"></div>
 </div>
 
 <div id="alert-container"></div>
