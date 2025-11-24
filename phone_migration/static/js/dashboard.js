@@ -9,6 +9,10 @@ let deviceStatus = null;
     let displayedOperations = new Set();
     let manualRules = [];
     let selectedRuleIds = [];
+    let previewExpanded = false;
+    let previewLoaded = false;
+    let currentPreviewType = null;  // 'auto' or 'manual'
+    let allRules = [];  // Store all rules for preview
     
     function openAddModalForDevice(deviceName, mtpId, idType, idValue) {
         // Store device info in window so profiles.js can access it
@@ -251,7 +255,139 @@ let deviceStatus = null;
         return html;
     }
     
+    async function loadRulesPreview(type = 'auto') {
+        if (!deviceStatus || !deviceStatus.connected) {
+            return;
+        }
+        
+        currentPreviewType = type;
+        
+        try {
+            // Load rules for the current profile
+            const data = await apiGet(`/api/profiles/${deviceStatus.profile_name}/rules`);
+            allRules = data.rules || [];
+            
+            let rulesToShow = [];
+            let title = '';
+            
+            if (type === 'auto') {
+                // Filter non-manual rules
+                rulesToShow = allRules.filter(r => !r.manual_only);
+                title = `Auto Rules (${rulesToShow.length})`;
+            } else {
+                // Show selected manual rules or all manual rules
+                if (selectedRuleIds.length > 0) {
+                    rulesToShow = allRules.filter(r => selectedRuleIds.includes(r.id));
+                    title = `Selected Manual Rules (${rulesToShow.length})`;
+                } else {
+                    rulesToShow = allRules.filter(r => r.manual_only);
+                    title = `All Manual Rules (${rulesToShow.length})`;
+                }
+            }
+            
+            if (rulesToShow.length === 0) {
+                document.getElementById('rules-preview-title').textContent = `No ${type === 'auto' ? 'auto' : 'manual'} rules configured`;
+                document.getElementById('rules-preview-content').innerHTML = '<div style="padding: 20px; text-align: center; color: var(--text-muted); font-size: 12px;">No rules to display</div>';
+                previewLoaded = true;
+                return;
+            }
+            
+            // Build preview HTML
+            document.getElementById('rules-preview-title').textContent = title;
+            const previewContent = document.getElementById('rules-preview-content');
+            
+            // Show current options at the top
+            let optionsHtml = '<div style="background: rgba(0,0,0,0.4); border: 1px solid rgba(255,255,255,0.15); border-radius: 6px; padding: 10px; margin-bottom: 12px; font-size: 12px;">';
+            optionsHtml += '<div style="color: var(--text-muted); margin-bottom: 6px; font-weight: 600;"><i class="fas fa-cog"></i> Run Options:</div>';
+            optionsHtml += '<div style="display: flex; gap: 12px; flex-wrap: wrap;">';
+            
+            if (options.dry_run) {
+                optionsHtml += '<span style="background: rgba(96,165,250,0.2); color: var(--info); padding: 3px 8px; border-radius: 4px;"><i class="fas fa-eye"></i> Dry Run</span>';
+            } else {
+                optionsHtml += '<span style="background: rgba(245,158,11,0.2); color: var(--warning); padding: 3px 8px; border-radius: 4px;"><i class="fas fa-exclamation-triangle"></i> Live Execution</span>';
+            }
+            
+            if (options.notify) {
+                optionsHtml += '<span style="background: rgba(34,197,94,0.2); color: var(--success); padding: 3px 8px; border-radius: 4px;"><i class="fas fa-bell"></i> Notifications</span>';
+            }
+            
+            if (options.rename_duplicates) {
+                optionsHtml += '<span style="background: rgba(34,197,94,0.2); color: var(--success); padding: 3px 8px; border-radius: 4px;"><i class="fas fa-copy"></i> Rename Conflicts</span>';
+            } else {
+                optionsHtml += '<span style="background: rgba(100,116,139,0.2); color: var(--text-muted); padding: 3px 8px; border-radius: 4px;"><i class="fas fa-forward"></i> Skip Conflicts</span>';
+            }
+            
+            optionsHtml += '</div></div>';
+            
+            previewContent.innerHTML = optionsHtml + rulesToShow.map(rule => {
+                const modeClass = rule.mode || 'unknown';
+                const modeIcon = getModeIcon(modeClass);
+                return `
+                    <div style="background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1); border-radius: 6px; padding: 12px; margin-bottom: 8px;">
+                        <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px;">
+                            <span class="operation-mode ${modeClass}" style="font-size: 11px; padding: 3px 8px;">
+                                <i class="fas fa-${modeIcon}"></i> ${rule.mode.toUpperCase()}
+                            </span>
+                            <span style="font-size: 12px; color: var(--text-muted); font-family: monospace;">${rule.id}</span>
+                        </div>
+                        <div style="font-size: 12px; color: var(--text); display: flex; align-items: center; gap: 8px;">
+                            <i class="fas fa-mobile-alt" style="width: 14px; color: var(--info);"></i>
+                            <span style="flex: 1; overflow: hidden; text-overflow: ellipsis;">${rule.phone_path}</span>
+                        </div>
+                        <div style="font-size: 12px; color: var(--text); display: flex; align-items: center; gap: 8px; margin-top: 4px;">
+                            <i class="fas fa-desktop" style="width: 14px; color: var(--success);"></i>
+                            <span style="flex: 1; overflow: hidden; text-overflow: ellipsis;">${rule.desktop_path}</span>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+            
+            previewLoaded = true;
+            
+        } catch (error) {
+            console.error('Failed to load rules preview:', error);
+            document.getElementById('rules-preview-title').textContent = 'Error loading rules';
+            document.getElementById('rules-preview-content').innerHTML = '<div style="padding: 20px; text-align: center; color: var(--danger); font-size: 12px;">Failed to load rules</div>';
+            previewLoaded = true;
+        }
+    }
+    
+    async function toggleRulesPreview() {
+        const content = document.getElementById('rules-preview-content');
+        const chevron = document.getElementById('preview-chevron');
+        
+        if (previewExpanded) {
+            // Collapse
+            content.style.display = 'none';
+            chevron.style.transform = 'rotate(0deg)';
+            previewExpanded = false;
+        } else {
+            // Expand - load if not loaded yet
+            if (!previewLoaded || currentPreviewType !== (selectedRuleIds.length > 0 ? 'manual' : 'auto')) {
+                await loadRulesPreview(selectedRuleIds.length > 0 ? 'manual' : 'auto');
+            }
+            content.style.display = 'block';
+            chevron.style.transform = 'rotate(180deg)';
+            previewExpanded = true;
+        }
+    }
+    
     async function startRun() {
+        if (!deviceStatus || !deviceStatus.connected) {
+            showAlert('Please connect your phone first', 'danger');
+            return;
+        }
+        
+        if (isRunning) return;
+        
+        // Load preview for auto rules and run directly
+        previewLoaded = false;
+        currentPreviewType = 'auto';
+        await loadRulesPreview('auto');
+        executeRun();
+    }
+    
+    async function executeRun() {
         if (!deviceStatus || !deviceStatus.connected) {
             showAlert('Please connect your phone first', 'danger');
             return;
@@ -610,6 +746,19 @@ let deviceStatus = null;
         
         closeManualSelection();
         
+        // Load preview for manual rules and run directly
+        previewLoaded = false;
+        currentPreviewType = 'manual';
+        await loadRulesPreview('manual');
+        executeManualRun();
+    }
+    
+    async function executeManualRun() {
+        if (selectedRuleIds.length === 0) {
+            showAlert('Please select at least one rule to run', 'danger');
+            return;
+        }
+        
         // Clear previous results immediately
         document.getElementById('stats-card').style.display = 'none';
         document.getElementById('output-card').style.display = 'none';
@@ -664,7 +813,14 @@ let deviceStatus = null;
     // Keyboard shortcuts
     document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') {
-            closeManualSelection();
+            // Check which modal/card is open and close it
+            const manualCard = document.getElementById('manual-selection-card');
+            
+            if (previewExpanded) {
+                toggleRulesPreview();
+            } else if (manualCard && manualCard.style.display !== 'none') {
+                closeManualSelection();
+            }
         }
     });
     

@@ -263,6 +263,7 @@ let currentProfile = null;
         
         document.getElementById('browser-title').textContent = 'Browse Phone Folders';
         document.getElementById('browser-modal').classList.add('active');
+        loadBookmarks();
         loadBrowserDirectory(initialPath);
     }
     
@@ -289,6 +290,7 @@ let currentProfile = null;
         
         document.getElementById('browser-title').textContent = 'Browse Desktop Folders';
         document.getElementById('browser-modal').classList.add('active');
+        loadBookmarks();
         loadBrowserDirectory(initialPath);
     }
     
@@ -343,13 +345,14 @@ let currentProfile = null;
                     const isDir = entry.type === 'dir';
                     const icon = isDir ? 'fa-folder' : 'fa-file';
                     const disabledClass = isDir ? '' : 'disabled';
+                    const symlinkBadge = entry.is_symlink ? '<i class="fas fa-link" style="font-size: 10px; color: #F59E0B; margin-left: 4px;" title="Symbolic link"></i>' : '';
                     
                     return `
                         <div class="browser-entry type-${entry.type} ${disabledClass}" 
                              data-path="${escapeHtml(entry.path)}" 
                              data-type="${entry.type}">
                             <i class="fas ${icon}"></i>
-                            <span>${escapeHtml(entry.name)}</span>
+                            <span>${escapeHtml(entry.name)}${symlinkBadge}</span>
                         </div>
                     `;
                 }).join('');
@@ -534,3 +537,125 @@ let currentProfile = null;
             closeBrowser();
         }
     });
+    
+    // ========================================
+    // Bookmarks Functionality
+    // ========================================
+    
+    async function loadBookmarks() {
+        if (!browserState.type) return;
+        
+        try {
+            const response = await fetch(`/api/bookmarks/${browserState.type}`);
+            const data = await response.json();
+            
+            if (!response.ok) {
+                console.error('Failed to load bookmarks:', data.error);
+                return;
+            }
+            
+            const bookmarksList = document.getElementById('bookmarks-list');
+            const bookmarksSection = document.getElementById('bookmarks-section');
+            
+            if (data.bookmarks && data.bookmarks.length > 0) {
+                bookmarksSection.style.display = 'block';
+                
+                // Add mount shortcuts for desktop
+                let mountsHtml = '';
+                if (browserState.type === 'desktop') {
+                    // Add common mounts
+                    mountsHtml = `
+                        <button class="bookmark-btn" onclick="navigateToBookmark('/mnt')" title="Mounted devices">
+                            <i class="fas fa-hdd"></i> /mnt
+                        </button>
+                        <button class="bookmark-btn" onclick="navigateToBookmark('${escapeHtml(window.location.pathname.includes('home') ? '~' : '/')}')" title="Home directory">
+                            <i class="fas fa-home"></i> Home
+                        </button>
+                    `;
+                }
+                
+                const bookmarksHtml = data.bookmarks.map((bookmark, index) => `
+                    <button class="bookmark-btn" onclick="navigateToBookmark('${escapeHtml(bookmark.path)}')" title="${escapeHtml(bookmark.path)}">
+                        <i class="fas fa-star" style="font-size: 10px; color: #F59E0B;"></i>
+                        ${escapeHtml(bookmark.name)}
+                        <i class="fas fa-times" onclick="event.stopPropagation(); deleteBookmark(${index})" style="font-size: 10px; margin-left: 4px; opacity: 0.6;" title="Remove bookmark"></i>
+                    </button>
+                `).join('');
+                
+                bookmarksList.innerHTML = mountsHtml + bookmarksHtml;
+            } else {
+                // Still show mount shortcuts for desktop even without bookmarks
+                if (browserState.type === 'desktop') {
+                    bookmarksSection.style.display = 'block';
+                    bookmarksList.innerHTML = `
+                        <button class="bookmark-btn" onclick="navigateToBookmark('/mnt')" title="Mounted devices">
+                            <i class="fas fa-hdd"></i> /mnt
+                        </button>
+                        <button class="bookmark-btn" onclick="navigateToBookmark('~')" title="Home directory">
+                            <i class="fas fa-home"></i> Home
+                        </button>
+                    `;
+                } else {
+                    bookmarksSection.style.display = 'none';
+                }
+            }
+        } catch (error) {
+            console.error('Error loading bookmarks:', error);
+        }
+    }
+    
+    async function showBookmarkPrompt() {
+        const name = prompt('Enter bookmark name:');
+        
+        if (!name || !name.trim()) {
+            return;
+        }
+        
+        const path = browserState.currentPath;
+        
+        try {
+            const response = await fetch(`/api/bookmarks/${browserState.type}`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ name: name.trim(), path: path })
+            });
+            
+            const result = await response.json();
+            
+            if (response.ok && result.success) {
+                showAlert('Bookmark added successfully!', 'success');
+                loadBookmarks();
+            } else {
+                showAlert(result.error || 'Failed to add bookmark', 'danger');
+            }
+        } catch (error) {
+            showAlert('Error: ' + error.message, 'danger');
+        }
+    }
+    
+    async function deleteBookmark(index) {
+        if (!confirm('Remove this bookmark?')) {
+            return;
+        }
+        
+        try {
+            const response = await fetch(`/api/bookmarks/${browserState.type}/${index}`, {
+                method: 'DELETE'
+            });
+            
+            const result = await response.json();
+            
+            if (response.ok && result.success) {
+                showAlert('Bookmark removed', 'success');
+                loadBookmarks();
+            } else {
+                showAlert(result.error || 'Failed to remove bookmark', 'danger');
+            }
+        } catch (error) {
+            showAlert('Error: ' + error.message, 'danger');
+        }
+    }
+    
+    function navigateToBookmark(path) {
+        loadBrowserDirectory(path);
+    }

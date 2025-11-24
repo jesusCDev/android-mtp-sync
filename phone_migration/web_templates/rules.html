@@ -109,6 +109,15 @@
             <button class="btn btn-small btn-success" onclick="showCreateFolderPrompt()" title="Create new folder">
                 <i class="fas fa-folder-plus"></i> New Folder
             </button>
+            <button class="btn btn-small btn-warning" onclick="showBookmarkPrompt()" title="Bookmark current path">
+                <i class="fas fa-star"></i> Bookmark
+            </button>
+        </div>
+        
+        <!-- Bookmarks Section -->
+        <div id="bookmarks-section" style="padding: 12px 24px; border-bottom: 1px solid var(--border-subtle); display: none;">
+            <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 8px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">Quick Access</div>
+            <div id="bookmarks-list" style="display: flex; flex-wrap: wrap; gap: 6px;"></div>
         </div>
         
         <div class="browser-list" id="browser-list">
