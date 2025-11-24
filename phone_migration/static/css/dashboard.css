@@ -21,6 +21,18 @@
         opacity: 0.5;
         pointer-events: none;
         filter: grayscale(0.3);
+        animation: disabledPulse 2s ease-in-out infinite;
+    }
+    
+    @keyframes disabledPulse {
+        0%, 100% { opacity: 0.5; }
+        50% { opacity: 0.3; }
+    }
+    
+    @keyframes progressGradient {
+        0% { background-position: 0% 50%; }
+        50% { background-position: 100% 50%; }
+        100% { background-position: 0% 50%; }
     }
     
     .option-card:hover {

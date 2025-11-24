@@ -431,6 +431,16 @@ let deviceStatus = null;
         const notifyOption = document.getElementById('notify-option');
         const renameOption = document.getElementById('rename-duplicates-option');
         const navLinks = document.querySelectorAll('.nav-link');
+        const progressBar = document.getElementById('running-progress-bar');
+        const progressFill = document.getElementById('running-progress-fill');
+        
+        // Show progress bar
+        if (progressBar) {
+            progressBar.style.display = 'block';
+            // Animate to 90% over 30 seconds
+            progressFill.style.transition = 'width 30s ease-out';
+            setTimeout(() => progressFill.style.width = '90%', 50);
+        }
         
         // Disable all buttons and options
         runBtn.disabled = true;
@@ -544,6 +554,15 @@ let deviceStatus = null;
             const notifyOption = document.getElementById('notify-option');
             const renameOption = document.getElementById('rename-duplicates-option');
             const navLinks = document.querySelectorAll('.nav-link');
+            const progressBar = document.getElementById('running-progress-bar');
+            const progressFill = document.getElementById('running-progress-fill');
+            
+            // Show progress bar
+            if (progressBar) {
+                progressBar.style.display = 'block';
+                progressFill.style.transition = 'width 30s ease-out';
+                setTimeout(() => progressFill.style.width = '90%', 50);
+            }
             
             runBtn.disabled = true;
             manualBtn.disabled = true;
@@ -766,6 +785,19 @@ let deviceStatus = null;
         const notifyOption = document.getElementById('notify-option');
         const renameOption = document.getElementById('rename-duplicates-option');
         const navLinks = document.querySelectorAll('.nav-link');
+        const progressBar = document.getElementById('running-progress-bar');
+        const progressFill = document.getElementById('running-progress-fill');
+        
+        // Complete and hide progress bar
+        if (progressBar && progressFill) {
+            progressFill.style.transition = 'width 0.3s ease-out';
+            progressFill.style.width = '100%';
+            setTimeout(() => {
+                progressBar.style.display = 'none';
+                progressFill.style.transition = 'none';
+                progressFill.style.width = '0%';
+            }, 400);
+        }
         
         // Re-enable buttons and options
         runBtn.disabled = false;
@@ -897,6 +929,15 @@ let deviceStatus = null;
         const notifyOption = document.getElementById('notify-option');
         const renameOption = document.getElementById('rename-duplicates-option');
         const navLinks = document.querySelectorAll('.nav-link');
+        const progressBar = document.getElementById('running-progress-bar');
+        const progressFill = document.getElementById('running-progress-fill');
+        
+        // Show progress bar
+        if (progressBar) {
+            progressBar.style.display = 'block';
+            progressFill.style.transition = 'width 30s ease-out';
+            setTimeout(() => progressFill.style.width = '90%', 50);
+        }
         
         // Disable all buttons and options
         runBtn.disabled = true;
