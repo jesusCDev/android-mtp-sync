@@ -33,11 +33,14 @@ let deviceStatus = null;
             deviceStatus = status;
             
             // Update button state based on connection AND accessibility
+            // BUT: Don't re-enable if a run is in progress
             const runBtn = document.getElementById('run-btn');
             const manualBtn = document.getElementById('manual-btn');
             const isReady = status.connected && status.accessible;
-            if (runBtn) runBtn.disabled = !isReady;
-            if (manualBtn) manualBtn.disabled = !isReady;
+            if (!isRunning) {
+                if (runBtn) runBtn.disabled = !isReady;
+                if (manualBtn) manualBtn.disabled = !isReady;
+            }
             
             let statusHtml = '';
             
@@ -427,9 +430,18 @@ let deviceStatus = null;
         // Disable all buttons and options
         runBtn.disabled = true;
         manualBtn.disabled = true;
-        if (dryRunOption) dryRunOption.style.pointerEvents = 'none';
-        if (notifyOption) notifyOption.style.pointerEvents = 'none';
-        if (renameOption) renameOption.style.pointerEvents = 'none';
+        if (dryRunOption) {
+            dryRunOption.style.pointerEvents = 'none';
+            dryRunOption.style.opacity = '0.5';
+        }
+        if (notifyOption) {
+            notifyOption.style.pointerEvents = 'none';
+            notifyOption.style.opacity = '0.5';
+        }
+        if (renameOption) {
+            renameOption.style.pointerEvents = 'none';
+            renameOption.style.opacity = '0.5';
+        }
         
         runBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Running...';
         
@@ -696,9 +708,18 @@ let deviceStatus = null;
         // Re-enable buttons and options
         runBtn.disabled = false;
         manualBtn.disabled = false;
-        if (dryRunOption) dryRunOption.style.pointerEvents = 'auto';
-        if (notifyOption) notifyOption.style.pointerEvents = 'auto';
-        if (renameOption) renameOption.style.pointerEvents = 'auto';
+        if (dryRunOption) {
+            dryRunOption.style.pointerEvents = 'auto';
+            dryRunOption.style.opacity = '1';
+        }
+        if (notifyOption) {
+            notifyOption.style.pointerEvents = 'auto';
+            notifyOption.style.opacity = '1';
+        }
+        if (renameOption) {
+            renameOption.style.pointerEvents = 'auto';
+            renameOption.style.opacity = '1';
+        }
         
         runBtn.innerHTML = '<i class="fas fa-play"></i> Run All Rules';
         manualBtn.innerHTML = '<i class="fas fa-hand-paper"></i> Run Manual Rules';
@@ -821,9 +842,18 @@ let deviceStatus = null;
         // Disable all buttons and options
         runBtn.disabled = true;
         manualBtn.disabled = true;
-        if (dryRunOption) dryRunOption.style.pointerEvents = 'none';
-        if (notifyOption) notifyOption.style.pointerEvents = 'none';
-        if (renameOption) renameOption.style.pointerEvents = 'none';
+        if (dryRunOption) {
+            dryRunOption.style.pointerEvents = 'none';
+            dryRunOption.style.opacity = '0.5';
+        }
+        if (notifyOption) {
+            notifyOption.style.pointerEvents = 'none';
+            notifyOption.style.opacity = '0.5';
+        }
+        if (renameOption) {
+            renameOption.style.pointerEvents = 'none';
+            renameOption.style.opacity = '0.5';
+        }
         
         manualBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Running...';
         
