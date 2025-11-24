@@ -1,7 +1,7 @@
 """Runner to detect connected device and execute configured rules."""
 
-from typing import Any, Dict, Optional
-from . import device, config as cfg, operations, gio_utils, paths, notifications, preflight
+from typing import Any, Dict, Optional, List, Tuple
+from . import device, config as cfg, operations, gio_utils, paths, notifications, preflight, dry_run_analyzer
 from .transfer_stats import TransferStats
 
 # ANSI color codes
@@ -200,6 +200,9 @@ def run_for_connected_device(config: Dict[str, Any], verbose: bool = False, dry_
     # Execute each rule
     total_stats = {"copied": 0, "renamed": 0, "deleted": 0, "errors": 0, "skipped": 0, "moved": 0, "synced": 0, "backed_up": 0, "folders": 0, "transfer_stats": None}
     
+    # Track per-rule stats for dry-run analysis
+    rules_stats: List[Tuple[Dict[str, Any], Dict[str, int]]] = []
+    
     # Start transfer statistics tracking
     transfer_tracker = TransferStats()
     transfer_tracker.start()
@@ -237,6 +240,7 @@ def run_for_connected_device(config: Dict[str, Any], verbose: bool = False, dry_
                 print(f"{Colors.DIM}Continuing anyway...{Colors.RESET}")
         
         try:
+            stats = None
             if mode == "move":
                 stats = operations.run_move_rule(rule, device_info, verbose, transfer_tracker, rename_duplicates=rename_duplicates)
                 total_stats["copied"] += stats.get("copied", 0)
@@ -274,6 +278,10 @@ def run_for_connected_device(config: Dict[str, Any], verbose: bool = False, dry_
             
             else:
                 print(f"\n{Colors.YELLOW}⚠ Unknown rule mode: {mode} (rule {rule_id}){Colors.RESET}")
+            
+            # Track stats for dry-run analysis
+            if stats:
+                rules_stats.append((rule, stats))
         
         except Exception as e:
             print(f"\n{Colors.RED}❌ Error executing rule {rule_id}:{Colors.RESET} {e}")
@@ -326,6 +334,29 @@ def run_for_connected_device(config: Dict[str, Any], verbose: bool = False, dry_
                 print(f"  {Colors.DIM}⚡ Speed: {Colors.RESET}{stats_summary['speed']}")
     
     if dry_run:
+        # Analyze dry-run results
+        if rules_stats:
+            print(f"\n{Colors.DIM}{'='*60}{Colors.RESET}")
+            print(f"\n{Colors.BOLD}{Colors.BRIGHT_WHITE}🔍 Analyzing Dry-Run Results...{Colors.RESET}")
+            
+            analysis = dry_run_analyzer.analyze_dry_run_results(rules_stats)
+            
+            # Display results
+            formatted = dry_run_analyzer.format_analysis_results(analysis)
+            if formatted:
+                print(formatted)
+            
+            # Handle blockers
+            if not analysis.is_safe:
+                print(f"\n{Colors.RED}{Colors.BOLD}❌ OPERATION BLOCKED{Colors.RESET}")
+                print(f"{Colors.RED}Critical safety violations detected. Please review the issues above.{Colors.RESET}")
+                print(f"\n{Colors.DIM}These issues would cause data loss or inconsistency.{Colors.RESET}")
+                return
+            
+            # No issues or only warnings/info
+            if not analysis.has_warnings and len(analysis.info) == 0:
+                print(f"\n{Colors.BRIGHT_GREEN}{Colors.BOLD}✅ All safety checks passed!{Colors.RESET}")
+        
         print(f"\n{Colors.BOLD}{Colors.YELLOW}[DRY RUN]{Colors.RESET} {Colors.DIM}No actual changes were made{Colors.RESET}")
         print(f"   {Colors.DIM}Run with{Colors.RESET} {Colors.GREEN}--yes{Colors.RESET} {Colors.DIM}or{Colors.RESET} {Colors.GREEN}-y{Colors.RESET} {Colors.DIM}to execute operations{Colors.RESET}")
     
