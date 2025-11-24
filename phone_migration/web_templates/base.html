@@ -3,7 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{% block title %}Phone Migration Tool{% endblock %}</title>
+    <title>{% block title %}SyncDroid - Phone Migration Tool{% endblock %}</title>
+    <link rel="icon" type="image/x-icon" href="{{ url_for('static', filename='img/favicon.ico') }}">
+    <link rel="icon" type="image/png" sizes="32x32" href="{{ url_for('static', filename='img/favicon-32x32.png') }}">
+    <link rel="icon" type="image/png" sizes="16x16" href="{{ url_for('static', filename='img/favicon-16x16.png') }}">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700&family=Inconsolata:wght@400;600&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/main.css') }}?v={{ range(1, 10000) | random }}">
@@ -12,7 +15,11 @@
 <body>
     <header>
         <div class="container">
-            <h1><i class="fas fa-mobile-alt"></i> Phone Migration</h1>
+            <h1>
+                <img src="{{ url_for('static', filename='img/logo.png') }}" alt="SyncDroid Logo" style="height: 32px; width: 32px; vertical-align: middle; margin-right: 8px;">
+                <span style="background: linear-gradient(135deg, #0ea5e9, #8b5cf6); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; font-weight: 700;">SyncDroid</span>
+                <span style="font-size: 14px; color: var(--text-muted); font-weight: 400; margin-left: 8px;">Phone Migration</span>
+            </h1>
             <nav>
                 <a href="/" {% if request.path == '/' %}class="active"{% endif %}><i class="fas fa-th-large"></i> Dashboard</a>
                 <a href="/profiles" {% if request.path == '/profiles' %}class="active"{% endif %}><i class="fas fa-user-circle"></i> Profiles</a>

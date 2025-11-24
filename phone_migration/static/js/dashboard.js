@@ -186,6 +186,28 @@ let deviceStatus = null;
         } else {
             card.classList.remove('selected');
         }
+        
+        // Update command preview dynamically
+        updateCommandPreview();
+    }
+    
+    function updateCommandPreview() {
+        const previewContent = document.getElementById('command-preview-content');
+        if (previewContent) {
+            previewContent.innerHTML = buildCommandPreview(options.dry_run);
+        }
+    }
+    
+    function updateManualCommandPreview() {
+        const previewDiv = document.getElementById('manual-command-preview');
+        const previewContent = document.getElementById('manual-command-preview-content');
+        
+        if (selectedRuleIds.length > 0) {
+            previewDiv.style.display = 'block';
+            previewContent.innerHTML = buildCommandPreview(options.dry_run, selectedRuleIds);
+        } else {
+            previewDiv.style.display = 'none';
+        }
     }
     
     function buildCommandPreview(isDryRun, selectedRules = []) {
@@ -398,8 +420,17 @@ let deviceStatus = null;
         isRunning = true;
         const runBtn = document.getElementById('run-btn');
         const manualBtn = document.getElementById('manual-btn');
+        const dryRunOption = document.getElementById('dry-run-option');
+        const notifyOption = document.getElementById('notify-option');
+        const renameOption = document.getElementById('rename-duplicates-option');
+        
+        // Disable all buttons and options
         runBtn.disabled = true;
         manualBtn.disabled = true;
+        if (dryRunOption) dryRunOption.style.pointerEvents = 'none';
+        if (notifyOption) notifyOption.style.pointerEvents = 'none';
+        if (renameOption) renameOption.style.pointerEvents = 'none';
+        
         runBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Running...';
         
         // Clear previous results immediately
@@ -411,10 +442,7 @@ let deviceStatus = null;
         document.getElementById('stat-errors').textContent = '0';
         document.getElementById('smart-copy-progress').style.display = 'none';
         
-        // Show command preview
-        document.getElementById('command-preview-card').style.display = 'block';
-        const previewContent = document.getElementById('command-preview-content');
-        previewContent.innerHTML = buildCommandPreview(options.dry_run);
+        // Command preview already showing and updated
         
         updateRunStatus('running', 'Running auto rules...');
         document.getElementById('manual-selection-card').style.display = 'none';
@@ -659,10 +687,21 @@ let deviceStatus = null;
     
     function resetRunButton() {
         isRunning = false;
-        document.getElementById('run-btn').disabled = false;
-        document.getElementById('run-btn').innerHTML = '<i class="fas fa-play"></i> Run All Rules';
-        document.getElementById('manual-btn').disabled = false;
-        document.getElementById('manual-btn').innerHTML = '<i class="fas fa-hand-paper"></i> Run Manual Rules';
+        const runBtn = document.getElementById('run-btn');
+        const manualBtn = document.getElementById('manual-btn');
+        const dryRunOption = document.getElementById('dry-run-option');
+        const notifyOption = document.getElementById('notify-option');
+        const renameOption = document.getElementById('rename-duplicates-option');
+        
+        // Re-enable buttons and options
+        runBtn.disabled = false;
+        manualBtn.disabled = false;
+        if (dryRunOption) dryRunOption.style.pointerEvents = 'auto';
+        if (notifyOption) notifyOption.style.pointerEvents = 'auto';
+        if (renameOption) renameOption.style.pointerEvents = 'auto';
+        
+        runBtn.innerHTML = '<i class="fas fa-play"></i> Run All Rules';
+        manualBtn.innerHTML = '<i class="fas fa-hand-paper"></i> Run Manual Rules';
     }
     
     async function openManualRulesModal() {
@@ -736,6 +775,9 @@ let deviceStatus = null;
         if (runSelectedBtn) {
             runSelectedBtn.disabled = selectedRuleIds.length === 0;
         }
+        
+        // Update manual command preview dynamically
+        updateManualCommandPreview();
     }
     
     async function runSelectedManualRules() {
@@ -768,17 +810,21 @@ let deviceStatus = null;
         document.getElementById('stat-errors').textContent = '0';
         document.getElementById('smart-copy-progress').style.display = 'none';
         
-        // Show command preview
-        document.getElementById('command-preview-card').style.display = 'block';
-        const previewContent = document.getElementById('command-preview-content');
-        previewContent.innerHTML = buildCommandPreview(options.dry_run, selectedRuleIds);
-        
         // Run with specific rule IDs
         isRunning = true;
         const runBtn = document.getElementById('run-btn');
         const manualBtn = document.getElementById('manual-btn');
+        const dryRunOption = document.getElementById('dry-run-option');
+        const notifyOption = document.getElementById('notify-option');
+        const renameOption = document.getElementById('rename-duplicates-option');
+        
+        // Disable all buttons and options
         runBtn.disabled = true;
         manualBtn.disabled = true;
+        if (dryRunOption) dryRunOption.style.pointerEvents = 'none';
+        if (notifyOption) notifyOption.style.pointerEvents = 'none';
+        if (renameOption) renameOption.style.pointerEvents = 'none';
+        
         manualBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Running...';
         
         updateRunStatus('running', `Running ${selectedRuleIds.length} manual rule(s)...`);
@@ -826,6 +872,7 @@ let deviceStatus = null;
     
     // Load on page load
     loadDeviceStatus();
+    updateCommandPreview(); // Initialize command preview
     
     // Auto-refresh every 5 seconds
     setInterval(loadDeviceStatus, 5000);
