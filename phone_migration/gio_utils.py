@@ -193,6 +193,19 @@ def gio_copy(src: str, dst: str, recursive: bool = False, overwrite: bool = Fals
         print(f"  {Colors.GREEN}✓{Colors.RESET} {src_name} → {dst_short}")
     
     result = run(args, check=False)
+    
+    # Debug: Log detailed error information on failure
+    if result.returncode != 0:
+        import sys
+        error_msg = result.stderr or result.stdout or "Unknown error"
+        print(f"  {Colors.RED}✗ Copy failed ({result.returncode}){Colors.RESET}", file=sys.stderr)
+        if error_msg.strip():
+            # Check if it's a directory copy issue
+            if "directory" in error_msg.lower() and not recursive:
+                print(f"    {Colors.YELLOW}Hint: Source is a directory, need -r flag{Colors.RESET}", file=sys.stderr)
+            else:
+                print(f"    Error: {error_msg.strip()}", file=sys.stderr)
+    
     return result.returncode == 0
 
 
