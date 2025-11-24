@@ -167,6 +167,9 @@ class SafeTestSuite:
         try:
             source_path = f"{self.TEST_FOLDER}/copy_test"
             dest_path = self.LOCAL_TEST_DIR / "copy_output"
+            # Clean up from previous runs
+            if dest_path.exists():
+                shutil.rmtree(dest_path)
             dest_path.mkdir(exist_ok=True)
             
             # Get pre-copy state (count ALL files recursively)
@@ -222,6 +225,9 @@ class SafeTestSuite:
         try:
             source_path = f"{self.TEST_FOLDER}/move_test"
             dest_path = self.LOCAL_TEST_DIR / "move_output"
+            # Clean up from previous runs
+            if dest_path.exists():
+                shutil.rmtree(dest_path)
             dest_path.mkdir(exist_ok=True)
             
             # Get pre-move state (count ALL files recursively)
@@ -285,6 +291,9 @@ class SafeTestSuite:
         try:
             # Populate desktop with test files
             source_path = self.LOCAL_TEST_DIR / "sync_source"
+            # Clean up from previous runs
+            if source_path.exists():
+                shutil.rmtree(source_path)
             source_path.mkdir(exist_ok=True)
             
             videos_dir = Path(__file__).parent / "videos"
@@ -341,6 +350,9 @@ class SafeTestSuite:
         try:
             source_path = f"{self.TEST_FOLDER}/backup_test"
             dest_path = self.LOCAL_TEST_DIR / "backup_output"
+            # Clean up from previous runs
+            if dest_path.exists():
+                shutil.rmtree(dest_path)
             dest_path.mkdir(exist_ok=True)
             
             # Get pre-backup state (count ALL files recursively)
