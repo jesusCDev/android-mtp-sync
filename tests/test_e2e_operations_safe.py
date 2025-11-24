@@ -25,7 +25,7 @@ class SafeTestSuite:
     """Safe test suite with verification before deletion."""
     
     # SAFETY: These paths are isolated and safe
-    TEST_FOLDER = "test-android-mtp"  # On phone - clearly marked as test
+    TEST_FOLDER = "Internal storage/test-android-mtp"  # On phone - clearly marked as test
     LOCAL_TEST_DIR = Path.home() / ".local" / "share" / "phone_migration_tests"
     
     def __init__(self):
@@ -151,6 +151,13 @@ class SafeTestSuite:
                 print(f"  ⚠ Could not hash {file_path}: {e}")
         return hashes
     
+    def count_all_files(self, tree: Dict) -> int:
+        """Recursively count all files in a tree structure."""
+        count = len(tree.get("files", []))
+        for subdir in tree.get("dirs", {}).values():
+            count += self.count_all_files(subdir)
+        return count
+    
     def test_copy_operation(self) -> bool:
         """Test copy operation: files should be copied but not deleted."""
         print("\n" + "-"*70)
@@ -162,9 +169,9 @@ class SafeTestSuite:
             dest_path = self.LOCAL_TEST_DIR / "copy_output"
             dest_path.mkdir(exist_ok=True)
             
-            # Get pre-copy state
+            # Get pre-copy state (count ALL files recursively)
             pre_copy = self.mtp.directory_tree(source_path)
-            pre_count = len(pre_copy.get("files", []))
+            pre_count = self.count_all_files(pre_copy)
             print(f"Files to copy: {pre_count}\n")
             
             # Run copy operation
@@ -186,7 +193,7 @@ class SafeTestSuite:
             
             # SAFETY: Verify files still exist on phone
             post_copy = self.mtp.directory_tree(source_path)
-            post_count = len(post_copy.get("files", []))
+            post_count = self.count_all_files(post_copy)
             print(f"✓ Files still on phone: {post_count}")
             
             # SAFETY: Validate counts match
@@ -217,9 +224,9 @@ class SafeTestSuite:
             dest_path = self.LOCAL_TEST_DIR / "move_output"
             dest_path.mkdir(exist_ok=True)
             
-            # Get pre-move state
+            # Get pre-move state (count ALL files recursively)
             pre_move = self.mtp.directory_tree(source_path)
-            pre_count = len(pre_move.get("files", []))
+            pre_count = self.count_all_files(pre_move)
             print(f"Files to move: {pre_count}\n")
             
             # Run move operation
@@ -241,7 +248,7 @@ class SafeTestSuite:
             
             # SAFETY: Verify files deleted from phone
             post_move = self.mtp.directory_tree(source_path)
-            post_count = len(post_move.get("files", []))
+            post_count = self.count_all_files(post_move)
             print(f"✓ Files remaining on phone: {post_count}")
             
             # SAFETY: Validate critical conditions
@@ -336,9 +343,9 @@ class SafeTestSuite:
             dest_path = self.LOCAL_TEST_DIR / "backup_output"
             dest_path.mkdir(exist_ok=True)
             
-            # Get pre-backup state
+            # Get pre-backup state (count ALL files recursively)
             pre_backup = self.mtp.directory_tree(source_path)
-            pre_count = len(pre_backup.get("files", []))
+            pre_count = self.count_all_files(pre_backup)
             print(f"Files to backup: {pre_count}\n")
             
             # Run backup operation
@@ -360,7 +367,7 @@ class SafeTestSuite:
             
             # SAFETY: Verify files still on phone
             post_backup = self.mtp.directory_tree(source_path)
-            post_count = len(post_backup.get("files", []))
+            post_count = self.count_all_files(post_backup)
             print(f"✓ Files still on phone: {post_count}")
             
             if desktop_count != pre_count or post_count != pre_count:

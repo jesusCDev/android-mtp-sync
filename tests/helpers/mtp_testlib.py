@@ -23,7 +23,12 @@ class MTPDevice:
     
     def mkdir(self, path: str) -> None:
         """Create directory on phone."""
-        full_uri = f"{self.uri}/{path.lstrip('/')}"
+        # Handle path properly - don't add extra slash
+        path_clean = path.lstrip('/')
+        if self.uri.endswith('/'):
+            full_uri = f"{self.uri}{path_clean}"
+        else:
+            full_uri = f"{self.uri}/{path_clean}"
         rc, _, err = self._run_gio("mkdir", "-p", full_uri)
         if rc != 0:
             raise RuntimeError(f"Failed to create {path}: {err}")
@@ -33,7 +38,11 @@ class MTPDevice:
         if not local_path.exists():
             raise FileNotFoundError(f"Local file not found: {local_path}")
         
-        full_uri = f"{self.uri}/{phone_path.lstrip('/')}"
+        path_clean = phone_path.lstrip('/')
+        if self.uri.endswith('/'):
+            full_uri = f"{self.uri}{path_clean}"
+        else:
+            full_uri = f"{self.uri}/{path_clean}"
         rc, _, err = self._run_gio("copy", str(local_path), full_uri)
         if rc != 0:
             raise RuntimeError(f"Failed to push {phone_path}: {err}")
@@ -62,7 +71,11 @@ class MTPDevice:
     
     def list_dir(self, path: str = "/") -> List[str]:
         """List directory contents on phone."""
-        full_uri = f"{self.uri}/{path.lstrip('/')}"
+        path_clean = path.lstrip('/')
+        if self.uri.endswith('/'):
+            full_uri = f"{self.uri}{path_clean}" if path_clean else self.uri.rstrip('/')
+        else:
+            full_uri = f"{self.uri}/{path_clean}" if path_clean else self.uri
         rc, stdout, err = self._run_gio("list", full_uri)
         if rc != 0:
             return []
@@ -70,7 +83,11 @@ class MTPDevice:
     
     def get_file_info(self, path: str) -> Dict[str, str]:
         """Get file information from phone."""
-        full_uri = f"{self.uri}/{path.lstrip('/')}"
+        path_clean = path.lstrip('/')
+        if self.uri.endswith('/'):
+            full_uri = f"{self.uri}{path_clean}" if path_clean else self.uri.rstrip('/')
+        else:
+            full_uri = f"{self.uri}/{path_clean}" if path_clean else self.uri
         rc, stdout, err = self._run_gio("info", full_uri)
         if rc != 0:
             return {}
@@ -84,7 +101,11 @@ class MTPDevice:
     
     def remove(self, path: str) -> None:
         """Remove file or directory from phone."""
-        full_uri = f"{self.uri}/{path.lstrip('/')}"
+        path_clean = path.lstrip('/')
+        if self.uri.endswith('/'):
+            full_uri = f"{self.uri}{path_clean}"
+        else:
+            full_uri = f"{self.uri}/{path_clean}"
         rc, _, err = self._run_gio("remove", full_uri)
         if rc != 0:
             raise RuntimeError(f"Failed to remove {path}: {err}")
