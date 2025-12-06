@@ -74,6 +74,16 @@
             <i class="fas fa-hand-paper"></i> Run Manual Rules
         </button>
     </div>
+    
+    <!-- Test Runner Button -->
+    <div style="margin-top: 12px; padding-top: 16px; border-top: 1px solid rgba(255,255,255,0.1);">
+        <button id="test-btn" class="btn" onclick="openTestRunner()" style="width: 100%; background: rgba(139, 92, 246, 0.2); border: 1px solid rgba(139, 92, 246, 0.5); color: #c4b5fd;" disabled>
+            <i class="fas fa-flask"></i> Run System Tests
+        </button>
+        <div style="font-size: 11px; color: var(--text-muted); margin-top: 8px; text-align: center;">
+            <i class="fas fa-info-circle"></i> Verify all operations work correctly with your connected device
+        </div>
+    </div>
 </div>
 
 <!-- Rules Preview Section (Collapsible) - Full Width Below -->
@@ -161,4 +171,208 @@
 </div>
 
 <div id="alert-container"></div>
+
+<!-- Test Runner Modal -->
+<div id="test-runner-modal" class="modal" style="display: none;">
+    <div class="modal-content" style="max-width: 900px; width: 90%; max-height: 85vh; overflow: hidden; display: flex; flex-direction: column;">
+        <div class="modal-header">
+            <h3><i class="fas fa-flask"></i> System Test Runner</h3>
+            <button class="btn btn-secondary btn-sm" onclick="closeTestRunner()">
+                <i class="fas fa-times"></i>
+            </button>
+        </div>
+        
+        <div class="modal-body" style="flex: 1; overflow-y: auto;">
+            <!-- Test Status -->
+            <div id="test-status-card" style="background: rgba(139, 92, 246, 0.15); border: 1.5px solid rgba(139, 92, 246, 0.5); border-radius: var(--radius-card); padding: 16px; margin-bottom: 16px;">
+                <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px;">
+                    <div id="test-status-icon">
+                        <i class="fas fa-info-circle" style="color: #c4b5fd; font-size: 24px;"></i>
+                    </div>
+                    <div style="flex: 1;">
+                        <div id="test-status-title" style="font-weight: 600; font-size: 16px; color: #c4b5fd;">Ready to Run Tests</div>
+                        <div id="test-status-subtitle" style="font-size: 13px; color: var(--text-muted); margin-top: 4px;">
+                            This will verify all operations (move, copy, sync, backup) work correctly
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Test Results Summary -->
+                <div id="test-results-summary" style="display: none; padding-top: 12px; border-top: 1px solid rgba(255,255,255,0.1);">
+                    <div style="display: flex; gap: 16px; font-size: 14px;">
+                        <div style="display: flex; align-items: center; gap: 6px;">
+                            <i class="fas fa-check-circle" style="color: var(--success);"></i>
+                            <span style="color: var(--text);"><span id="test-passed-count">0</span> Passed</span>
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 6px;">
+                            <i class="fas fa-times-circle" style="color: var(--danger);"></i>
+                            <span style="color: var(--text);"><span id="test-failed-count">0</span> Failed</span>
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 6px;">
+                            <i class="fas fa-forward" style="color: var(--text-muted);"></i>
+                            <span style="color: var(--text);"><span id="test-skipped-count">0</span> Skipped</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Test Output -->
+            <div style="background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1); border-radius: var(--radius-card); padding: 16px; min-height: 400px;">
+                <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 12px; text-transform: uppercase; letter-spacing: 0.5px;">
+                    <i class="fas fa-terminal"></i> Test Output
+                </div>
+                <div id="test-output" style="font-family: 'Courier New', monospace; font-size: 12px; line-height: 1.6; color: var(--text); white-space: pre-wrap; word-break: break-all;">
+                    No tests running
+                </div>
+            </div>
+        </div>
+        
+        <div class="modal-footer">
+            <button id="start-test-btn" class="btn btn-success" onclick="startTests()">
+                <i class="fas fa-play"></i> Start Tests
+            </button>
+            <button class="btn btn-secondary" onclick="closeTestRunner()">
+                Close
+            </button>
+        </div>
+    </div>
+</div>
+
+<script>
+// Test Runner JavaScript
+let testPollInterval = null;
+
+function openTestRunner() {
+    const testBtn = document.getElementById('test-btn');
+    if (testBtn.disabled) return;
+    
+    document.getElementById('test-runner-modal').style.display = 'flex';
+    document.getElementById('test-output').textContent = 'Click "Start Tests" to begin the test suite...\n\nThese tests will:\n- Verify device connectivity\n- Test file operations (copy, move, sync, backup)\n- Check edge cases (large files, special characters, etc.)\n- Validate data integrity\n\nNote: This may take several minutes to complete.';
+}
+
+function closeTestRunner() {
+    document.getElementById('test-runner-modal').style.display = 'none';
+    if (testPollInterval) {
+        clearInterval(testPollInterval);
+        testPollInterval = null;
+    }
+}
+
+async function startTests() {
+    const startBtn = document.getElementById('start-test-btn');
+    const statusIcon = document.getElementById('test-status-icon');
+    const statusTitle = document.getElementById('test-status-title');
+    const statusSubtitle = document.getElementById('test-status-subtitle');
+    const testOutput = document.getElementById('test-output');
+    const resultsSummary = document.getElementById('test-results-summary');
+    
+    // Disable start button
+    startBtn.disabled = true;
+    startBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Running...';
+    
+    // Update status
+    statusIcon.innerHTML = '<div class="spinner" style="width: 24px; height: 24px; border-width: 3px;"></div>';
+    statusTitle.textContent = 'Running Tests...';
+    statusSubtitle.textContent = 'Please wait, this may take several minutes';
+    statusTitle.style.color = '#0ea5e9';
+    
+    // Clear output
+    testOutput.textContent = 'Initializing test suite...\n';
+    resultsSummary.style.display = 'none';
+    
+    try {
+        const result = await apiPost('/api/tests/run', {});
+        
+        if (result.success) {
+            // Start polling for updates
+            testPollInterval = setInterval(pollTestStatus, 500);
+        } else {
+            throw new Error(result.error || 'Failed to start tests');
+        }
+    } catch (error) {
+        testOutput.textContent = `ERROR: ${error.message}\n\n` + testOutput.textContent;
+        statusIcon.innerHTML = '<i class="fas fa-times-circle" style="color: var(--danger); font-size: 24px;"></i>';
+        statusTitle.textContent = 'Test Failed';
+        statusTitle.style.color = 'var(--danger)';
+        statusSubtitle.textContent = error.message;
+        startBtn.disabled = false;
+        startBtn.innerHTML = '<i class="fas fa-play"></i> Start Tests';
+    }
+}
+
+async function pollTestStatus() {
+    try {
+        const status = await apiGet('/api/tests/status');
+        
+        // Update output
+        const testOutput = document.getElementById('test-output');
+        if (status.logs && status.logs.length > 0) {
+            testOutput.textContent = status.logs.join('\n');
+            // Auto-scroll to bottom
+            testOutput.parentElement.scrollTop = testOutput.parentElement.scrollHeight;
+        }
+        
+        // Update results summary
+        if (status.results) {
+            const resultsSummary = document.getElementById('test-results-summary');
+            document.getElementById('test-passed-count').textContent = status.results.passed || 0;
+            document.getElementById('test-failed-count').textContent = status.results.failed || 0;
+            document.getElementById('test-skipped-count').textContent = status.results.skipped || 0;
+            
+            if (status.results.passed > 0 || status.results.failed > 0 || status.results.skipped > 0) {
+                resultsSummary.style.display = 'block';
+            }
+        }
+        
+        // Check if completed
+        if (!status.running && status.progress === 100) {
+            clearInterval(testPollInterval);
+            testPollInterval = null;
+            
+            const statusIcon = document.getElementById('test-status-icon');
+            const statusTitle = document.getElementById('test-status-title');
+            const statusSubtitle = document.getElementById('test-status-subtitle');
+            const startBtn = document.getElementById('start-test-btn');
+            
+            const hasFailures = status.results && status.results.failed > 0;
+            
+            if (hasFailures) {
+                statusIcon.innerHTML = '<i class="fas fa-exclamation-triangle" style="color: var(--warning); font-size: 24px;"></i>';
+                statusTitle.textContent = 'Tests Completed with Failures';
+                statusTitle.style.color = 'var(--warning)';
+                statusSubtitle.textContent = `${status.results.failed} test(s) failed. Review output above for details.`;
+            } else {
+                statusIcon.innerHTML = '<i class="fas fa-check-circle" style="color: var(--success); font-size: 24px;"></i>';
+                statusTitle.textContent = 'All Tests Passed!';
+                statusTitle.style.color = 'var(--success)';
+                statusSubtitle.textContent = 'All operations are working correctly';
+            }
+            
+            startBtn.disabled = false;
+            startBtn.innerHTML = '<i class="fas fa-redo"></i> Run Again';
+        }
+    } catch (error) {
+        console.error('Test polling error:', error);
+    }
+}
+
+// Enable test button when device is ready
+function updateTestButton() {
+    const testBtn = document.getElementById('test-btn');
+    if (deviceStatus && deviceStatus.connected && deviceStatus.accessible && !isValidating) {
+        testBtn.disabled = false;
+        testBtn.style.opacity = '1';
+    } else {
+        testBtn.disabled = true;
+        testBtn.style.opacity = '0.5';
+    }
+}
+
+// Wait for page load to hook into status polling
+document.addEventListener('DOMContentLoaded', function() {
+    // Update test button on every status check
+    // This is called from dashboard.js after loadDeviceStatus completes
+    setInterval(updateTestButton, 1000);
+});
+</script>
 {% endblock %}

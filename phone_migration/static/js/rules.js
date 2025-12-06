@@ -37,8 +37,13 @@ let currentProfile = null;
         document.getElementById('rules-container').innerHTML = '<div class="spinner"></div>';
         
         try {
-            const data = await apiGet(`/api/profiles/${currentProfile}/rules`);
+            // Load rules and status (with validation warnings)
+            const [data, status] = await Promise.all([
+                apiGet(`/api/profiles/${currentProfile}/rules`),
+                apiGet('/api/status')
+            ]);
             const rules = data.rules || [];
+            const warnings = status.validation_warnings || [];
             
             if (rules.length === 0) {
                 document.getElementById('rules-container').innerHTML = `
@@ -74,8 +79,13 @@ let currentProfile = null;
                                 <span style="font-size: 13px; color: var(--text-muted); font-weight: 500;">(${groupedRules[mode].length})</span>
                             </h3>
                             <div style="display: grid; gap: 12px;">
-                                ${groupedRules[mode].map(rule => `
-                                    <div class="rule-card">
+                                ${groupedRules[mode].map(rule => {
+                                    // Check if this rule has validation warnings
+                                    const ruleWarnings = warnings.filter(w => w.rule_id === rule.id);
+                                    const hasWarnings = ruleWarnings.length > 0;
+                                    
+                                    return `
+                                    <div class="rule-card" ${hasWarnings ? 'style="border-left: 3px solid var(--warning);"' : ''}>
                                         <div class="rule-header">
                                             <div style="display: flex; align-items: center; gap: 12px;">
                                                 <span class="rule-mode ${rule.mode}">
@@ -83,9 +93,16 @@ let currentProfile = null;
                                                     ${getModeLabel(rule.mode)}
                                                 </span>
                                                 ${rule.manual_only ? '<span class="badge-manual"><i class="fas fa-hand-paper"></i> Manual</span>' : ''}
+                                                ${hasWarnings ? '<span style="background: rgba(255, 193, 7, 0.2); color: var(--warning); padding: 4px 8px; border-radius: 4px; font-size: 11px; font-weight: 600;"><i class="fas fa-exclamation-triangle"></i> ISSUE</span>' : ''}
                                             </div>
                                             <span style="color: var(--text-muted); font-size: 13px;">${rule.id}</span>
                                         </div>
+                                        ${hasWarnings ? `
+                                            <div style="background: rgba(255, 193, 7, 0.1); border-radius: 6px; padding: 10px; margin: 12px 0; border: 1px solid rgba(255, 193, 7, 0.3);">
+                                                <div style="color: var(--warning); font-size: 12px; font-weight: 600; margin-bottom: 6px;"><i class="fas fa-exclamation-triangle"></i> Configuration Issues:</div>
+                                                ${ruleWarnings.map(w => `<div style="color: var(--text-muted); font-size: 12px; margin-left: 16px;">• ${w.message}</div>`).join('')}
+                                            </div>
+                                        ` : ''}
                                         
                                         <div class="rule-paths">
                                             ${rule.mode === 'sync' ? `
@@ -123,7 +140,8 @@ let currentProfile = null;
                                             </button>
                                         </div>
                                     </div>
-                                `).join('')}
+                                    `;
+                                }).join('')}
                             </div>
                         </div>
                     `;

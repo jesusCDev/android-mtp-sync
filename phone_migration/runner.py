@@ -114,9 +114,9 @@ def run_for_connected_device(config: Dict[str, Any], verbose: bool = False, dry_
     user_requested_preview = dry_run  # User explicitly wants preview only
     need_validation = not dry_run and not skip_validation  # Auto-validate before real operations
     
-    # Set dry-run mode
+    # Set dry-run mode (IMPORTANT: always set this explicitly to avoid stale state)
+    gio_utils.DRY_RUN = dry_run
     if dry_run:
-        gio_utils.DRY_RUN = True
         print(f"{Colors.BOLD}{Colors.YELLOW}[DRY RUN MODE - Preview Only]{Colors.RESET}\n")
     elif need_validation:
         print(f"{Colors.BRIGHT_CYAN}🔍 Auto-validating operations before execution...{Colors.RESET}\n")

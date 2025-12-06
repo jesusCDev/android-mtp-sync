@@ -391,8 +391,11 @@ def run_move_rule(rule: Dict[str, Any], device: Dict[str, Any], verbose: bool = 
     # Recursively process phone directory
     _process_move_directory(source_uri, dest_dir, files_to_delete, stats, verbose, transfer_tracker=transfer_tracker, rename_duplicates=rename_duplicates)
 
-    # Delete files from phone after successful copy
-    # Don't list individual files - just count them
+    # SAFETY: Delete files from phone ONLY after successful copy verification
+    # files_to_delete is populated only if:
+    # 1. In dry-run mode: gio_copy returned success (line 496)
+    # 2. In execute mode: dest_file.exists() AND dest_file.stat().st_size > 0 (line 500)
+    # This ensures files are NEVER deleted unless copy was verified successful.
     if files_to_delete:
         if verbose:
             print(f"\n{Colors.DIM}Cleaning up phone:{Colors.RESET}")

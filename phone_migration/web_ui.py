@@ -9,7 +9,7 @@ from pathlib import Path
 from flask import Flask, render_template, jsonify, request, redirect, url_for
 from flask_cors import CORS
 
-from . import config as cfg, device, runner, operations, browser
+from . import config as cfg, device, runner, operations, browser, rule_validator
 
 
 app = Flask(__name__, 
@@ -53,6 +53,10 @@ run_history = []
 
 # Bookmarks storage (persisted to disk)
 bookmarks = {"desktop": [], "phone": []}
+
+# Validation warnings (updated on device connect)
+validation_warnings = []
+validation_in_progress = False
 
 
 def load_history():
@@ -145,6 +149,7 @@ def documentation():
 @app.route('/api/status')
 def api_status():
     """Get current system status."""
+    global validation_warnings, validation_in_progress
     from . import gio_utils, paths
     config = cfg.load_config()
     
@@ -170,20 +175,48 @@ def api_status():
                 # Any error = not accessible right now
                 accessible = False
         
+        # Validate rules in background if device is accessible
+        # Skip validation for now - it can hang on slow MTP connections
+        # TODO: Re-enable with better timeout handling
+        if False and accessible:
+            def validate_in_background():
+                global validation_warnings, validation_in_progress
+                try:
+                    warnings = rule_validator.validate_profile_rules(profile)
+                    validation_warnings = [w.to_dict() for w in warnings]
+                except Exception as e:
+                    print(f"Warning: Rule validation failed: {e}")
+                    import traceback
+                    traceback.print_exc()
+                finally:
+                    validation_in_progress = False
+            
+            # Run validation in background thread to not block status check
+            # Only start if not already validating
+            if not validation_in_progress:
+                validation_in_progress = True
+                threading.Thread(target=validate_in_background, daemon=True).start()
+        
         return jsonify({
             "connected": True,
             "accessible": accessible,
             "device_name": device_info.get("display_name", "Unknown"),
             "profile_name": profile.get("name", "unknown"),
-            "rule_count": len(profile.get("rules", []))
+            "rule_count": len(profile.get("rules", [])),
+            "validation_warnings": validation_warnings,
+            "validation_in_progress": validation_in_progress
         })
     else:
+        # Clear validation warnings when device disconnected
+        validation_warnings = []
         return jsonify({
             "connected": False,
             "accessible": False,
             "device_name": None,
             "profile_name": None,
-            "rule_count": 0
+            "rule_count": 0,
+            "validation_warnings": [],
+            "validation_in_progress": False
         })
 
 
@@ -349,9 +382,33 @@ def api_run():
         profile_name = "Unknown"
         rules_count = 0
         
+        # Create a custom stdout that captures AND streams output
+        class StreamingOutput:
+            def __init__(self):
+                self.buffer = []
+                
+            def write(self, text):
+                if text and text.strip():
+                    # Strip ANSI color codes for web display
+                    import re
+                    ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+                    clean_text = ansi_escape.sub('', text)
+                    
+                    # Add each line to logs immediately
+                    for line in clean_text.split('\n'):
+                        if line.strip():
+                            current_run_status["logs"].append(line)
+                            self.buffer.append(line)
+            
+            def flush(self):
+                pass
+                
+            def getvalue(self):
+                return '\n'.join(self.buffer)
+        
         # Capture stdout to get CLI output
         old_stdout = sys.stdout
-        sys.stdout = io.StringIO()
+        sys.stdout = StreamingOutput()
         
         try:
             config = cfg.load_config()
@@ -377,31 +434,18 @@ def api_run():
                 rename_duplicates=rename_duplicates
             )
             
-            # Get captured output and strip ANSI codes
-            output = sys.stdout.getvalue()
-            sys.stdout = old_stdout
-            
-            # Strip ANSI color codes for web display
-            import re
-            ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
-            clean_output = ansi_escape.sub('', output)
-            
-            # Split into lines and add to logs
-            for line in clean_output.split('\n'):
-                if line.strip():
-                    current_run_status["logs"].append(line)
-            
             current_run_status["progress"] = 100
             status = "success"
         except Exception as e:
-            sys.stdout = old_stdout
-            current_run_status["logs"].append(f"❌ Error: {str(e)}")
+            import traceback
+            error_msg = f"❌ Error: {str(e)}"
+            current_run_status["logs"].append(error_msg)
+            current_run_status["logs"].append(traceback.format_exc())
             current_run_status["stats"]["errors"] = current_run_status["stats"].get("errors", 0) + 1
             status = "error"
         finally:
             # Ensure stdout is restored
-            if sys.stdout != old_stdout:
-                sys.stdout = old_stdout
+            sys.stdout = old_stdout
             current_run_status["running"] = False
             
             # Save to history
@@ -824,6 +868,115 @@ def api_delete_bookmark(bookmark_type, index):
     save_bookmarks()
     
     return jsonify({"success": True, "removed": removed})
+
+
+# Test runner state
+test_run_status = {
+    "running": False,
+    "progress": 0,
+    "logs": [],
+    "results": {"passed": 0, "failed": 0, "skipped": 0},
+    "failed_tests": []
+}
+
+
+@app.route('/api/tests/run', methods=['POST'])
+def api_run_tests():
+    """Run the edge case test suite."""
+    global test_run_status
+    
+    if test_run_status["running"]:
+        return jsonify({"error": "Tests are already running"}), 409
+    
+    # Check if device is connected
+    config = cfg.load_config()
+    profile = runner.detect_connected_device(config, verbose=False)
+    
+    if not profile:
+        return jsonify({"error": "No device connected. Please connect your phone first."}), 400
+    
+    # Start tests in background thread
+    def run_tests():
+        global test_run_status
+        import subprocess
+        import os
+        
+        test_run_status["running"] = True
+        test_run_status["progress"] = 0
+        test_run_status["logs"] = []
+        test_run_status["results"] = {"passed": 0, "failed": 0, "skipped": 0}
+        test_run_status["failed_tests"] = []
+        
+        try:
+            # Get the project root directory
+            project_root = Path(__file__).parent.parent
+            test_file = project_root / "tests" / "test_edge_cases.py"
+            
+            if not test_file.exists():
+                test_run_status["logs"].append(f"ERROR: Test file not found: {test_file}")
+                test_run_status["running"] = False
+                return
+            
+            test_run_status["logs"].append("Starting edge case test suite...")
+            test_run_status["logs"].append(f"Test file: {test_file}")
+            test_run_status["logs"].append("")
+            
+            # Run tests with real-time output
+            process = subprocess.Popen(
+                [sys.executable, str(test_file)],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+                cwd=str(project_root)
+            )
+            
+            # Stream output line by line
+            for line in iter(process.stdout.readline, ''):
+                if line:
+                    line = line.rstrip()
+                    test_run_status["logs"].append(line)
+                    
+                    # Parse progress and results from output
+                    if "PASSED" in line:
+                        test_run_status["results"]["passed"] += 1
+                    elif "FAILED" in line:
+                        test_run_status["results"]["failed"] += 1
+                        # Extract test name if possible
+                        if "TEST" in line:
+                            test_run_status["failed_tests"].append(line)
+                    elif "SKIPPED" in line:
+                        test_run_status["results"]["skipped"] += 1
+            
+            process.wait()
+            
+            # Add final summary
+            exit_code = process.returncode
+            test_run_status["logs"].append("")
+            test_run_status["logs"].append("="*70)
+            if exit_code == 0:
+                test_run_status["logs"].append("✅ All tests completed successfully!")
+            else:
+                test_run_status["logs"].append(f"⚠️ Tests completed with exit code {exit_code}")
+            
+        except Exception as e:
+            test_run_status["logs"].append(f"ERROR: {str(e)}")
+            import traceback
+            test_run_status["logs"].append(traceback.format_exc())
+        finally:
+            test_run_status["running"] = False
+            test_run_status["progress"] = 100
+    
+    thread = threading.Thread(target=run_tests, daemon=True)
+    thread.start()
+    
+    return jsonify({"success": True, "message": "Tests started"})
+
+
+@app.route('/api/tests/status')
+def api_test_status():
+    """Get current test run status."""
+    return jsonify(test_run_status)
 
 
 def start_web_ui(host='127.0.0.1', port=8080, debug=False):

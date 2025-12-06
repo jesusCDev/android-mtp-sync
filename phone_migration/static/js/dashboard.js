@@ -13,6 +13,8 @@ let deviceStatus = null;
     let previewLoaded = false;
     let currentPreviewType = null;  // 'auto' or 'manual'
     let allRules = [];  // Store all rules for preview
+    let isValidating = false;  // Track if validation is in progress
+    let validationComplete = false;  // Track if validation has completed
     
     function openAddModalForDevice(deviceName, mtpId, idType, idValue) {
         // Store device info in window so profiles.js can access it
@@ -32,14 +34,34 @@ let deviceStatus = null;
             const status = await apiGet('/api/status');
             deviceStatus = status;
             
-            // Update button state based on connection AND accessibility
-            // BUT: Don't re-enable if a run is in progress
+            // Track validation state
+            isValidating = status.validation_in_progress || false;
+            if (!isValidating && status.connected && status.accessible) {
+                validationComplete = true;
+            }
+            
+            // Update button state based on connection, accessibility, AND validation
+            // Block operations if validation is in progress OR if not ready
             const runBtn = document.getElementById('run-btn');
             const manualBtn = document.getElementById('manual-btn');
-            const isReady = status.connected && status.accessible;
+            const isReady = status.connected && status.accessible && !isValidating;
             if (!isRunning) {
-                if (runBtn) runBtn.disabled = !isReady;
-                if (manualBtn) manualBtn.disabled = !isReady;
+                if (runBtn) {
+                    runBtn.disabled = !isReady;
+                    if (isValidating) {
+                        runBtn.title = "Validating rules, please wait...";
+                    } else {
+                        runBtn.title = "";
+                    }
+                }
+                if (manualBtn) {
+                    manualBtn.disabled = !isReady;
+                    if (isValidating) {
+                        manualBtn.title = "Validating rules, please wait...";
+                    } else {
+                        manualBtn.title = "";
+                    }
+                }
             }
             
             let statusHtml = '';
@@ -59,7 +81,56 @@ let deviceStatus = null;
             
             if (status.connected && status.accessible) {
                 // Device connected and accessible - all good
-                statusHtml = warningBanner + `
+                statusHtml = warningBanner;
+                
+                // Show validation in progress indicator
+                if (status.validation_in_progress) {
+                    statusHtml += `
+                        <div style="background: rgba(157, 212, 255, 0.15); border: 1.5px solid var(--info); border-radius: var(--radius-card); padding: 14px; margin-bottom: 16px;">
+                            <div style="display: flex; align-items: center; gap: 12px;">
+                                <div class="spinner" style="width: 16px; height: 16px; border-width: 2px;"></div>
+                                <span style="color: var(--info); font-weight: 600; font-size: 14px;">🔍 Validating Rules...</span>
+                            </div>
+                            <div style="margin-top: 8px; font-size: 12px; color: #94a3b8;">
+                                Checking if all configured paths exist and are accessible. Operations are blocked until validation completes.
+                            </div>
+                        </div>
+                    `;
+                }
+                
+                // Add validation warnings if any
+                if (status.validation_warnings && status.validation_warnings.length > 0) {
+                    statusHtml += `
+                        <div style="background: rgba(255, 214, 153, 0.15); border: 1.5px solid var(--warning); border-radius: var(--radius-card); padding: 14px; margin-bottom: 16px;">
+                            <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
+                                <i class="fas fa-exclamation-triangle" style="color: var(--warning); font-size: 16px;"></i>
+                                <span style="color: var(--warning); font-weight: 600; font-size: 14px;">⚠️ Rule Configuration Issues (${status.validation_warnings.length})</span>
+                            </div>
+                            <div style="display: flex; flex-direction: column; gap: 8px;">
+                    `;
+                    
+                    status.validation_warnings.forEach(warning => {
+                        const icon = warning.type.includes('phone') ? '📱' : '💻';
+                        statusHtml += `
+                            <div style="background: rgba(255, 214, 153, 0.1); border-radius: 6px; padding: 8px 10px; font-size: 13px;">
+                                <div style="color: #ffc107; font-weight: 500; margin-bottom: 4px;">
+                                    ${icon} Rule ${warning.rule_id} (${warning.rule_mode.toUpperCase()})
+                                </div>
+                                <div style="color: #cbd5e1; font-size: 12px;">${warning.message}</div>
+                            </div>
+                        `;
+                    });
+                    
+                    statusHtml += `
+                            </div>
+                            <div style="margin-top: 10px; font-size: 12px; color: #94a3b8;">
+                                <i class="fas fa-info-circle"></i> Fix these issues before running operations to avoid errors
+                            </div>
+                        </div>
+                    `;
+                }
+                
+                statusHtml += `
                     <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 16px;">
                         <span class="status-badge connected"><i class="fas fa-check-circle"></i> Connected & Ready</span>
                     </div>
@@ -449,9 +520,9 @@ let deviceStatus = null;
         
         runBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Running...';
         
-        // Clear previous results
-        document.getElementById('stats-card').style.display = 'none';
-        document.getElementById('output-card').style.display = 'none';
+        // Clear previous results and show cards immediately
+        document.getElementById('stats-card').style.display = 'block';
+        document.getElementById('output-card').style.display = 'block';
         document.getElementById('stat-copied').textContent = '0';
         document.getElementById('stat-skipped').textContent = '0';
         document.getElementById('stat-deleted').textContent = '0';
