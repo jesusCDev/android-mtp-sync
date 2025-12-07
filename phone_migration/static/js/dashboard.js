@@ -699,20 +699,45 @@ let deviceStatus = null;
             // Detect rule start: "Move: /path/to/source → /path/to/dest"
             const opMatch = line.match(/^[\p{Emoji}\u2192🔄-]*\s*(Move|Copy|Smart Copy|Sync|Backup):\s*(.+?)\s*[→\->=>]+\s*(.+)$/u);
             if (opMatch) {
+                // Mark previous rule as completed if we found a new operation
+                if (currentRuleId) {
+                    updateRuleProgress(currentRuleId, 'completed', currentStats);
+                }
+                
                 const [_, mode, source, dest] = opMatch;
                 currentMode = mode.trim();
                 
                 // Try to match this to a rule ID by comparing paths
-                // This is a best-effort approach
+                // Match by exact phone_path or desktop_path to avoid false matches
+                currentRuleId = null;
                 if (allRules && allRules.length > 0) {
+                    const sourceClean = source.trim();
+                    const destClean = dest.trim();
+                    
                     for (const rule of allRules) {
-                        if (rule.mode.toLowerCase().replace(' ', '_') === currentMode.toLowerCase().replace(' ', '_')) {
-                            // Simple path matching - could be improved
-                            if (source.includes(rule.phone_path) || dest.includes(rule.desktop_path)) {
-                                currentRuleId = rule.id;
-                                updateRuleProgress(currentRuleId, 'running', currentStats);
-                                break;
-                            }
+                        // Check if mode matches
+                        const ruleMode = rule.mode.toLowerCase().replace(' ', '_').replace('smart_copy', 'backup');
+                        const lineMode = currentMode.toLowerCase().replace(' ', '_');
+                        if (ruleMode !== lineMode) continue;
+                        
+                        // For sync/backup: desktop → phone, so source is desktop
+                        // For move/copy: phone → desktop, so source is phone
+                        let pathMatch = false;
+                        if (rule.mode === 'sync') {
+                            // Sync: desktop → phone
+                            pathMatch = destClean.endsWith(rule.phone_path) || sourceClean.endsWith(rule.desktop_path.split('/').pop() || rule.desktop_path);
+                        } else if (rule.mode === 'move' || rule.mode === 'copy') {
+                            // Move/Copy: phone → desktop
+                            pathMatch = sourceClean.endsWith(rule.phone_path) || destClean.includes(rule.desktop_path);
+                        } else if (rule.mode === 'backup' || rule.mode === 'smart_copy') {
+                            // Backup: phone → desktop
+                            pathMatch = sourceClean.endsWith(rule.phone_path) || destClean.includes(rule.desktop_path);
+                        }
+                        
+                        if (pathMatch) {
+                            currentRuleId = rule.id;
+                            updateRuleProgress(currentRuleId, 'running', currentStats);
+                            break;
                         }
                     }
                 }
@@ -726,14 +751,17 @@ let deviceStatus = null;
                 const skippedMatch = line.match(/⊙\s+Skipped:\s*(\d+)/);
                 const deletedMatch = line.match(/×\s+Deleted:\s*(\d+)/);
                 const syncedMatch = line.match(/✓\s+Synced:\s*(\d+)/);
+                const cleanedMatch = line.match(/Cleaned:\s*(\d+)/);
+                const noChangesMatch = line.match(/No changes/);
                 
                 if (copiedMatch) currentStats.copied = parseInt(copiedMatch[1]);
                 if (skippedMatch) currentStats.skipped = parseInt(skippedMatch[1]);
                 if (deletedMatch) currentStats.deleted = parseInt(deletedMatch[1]);
                 if (syncedMatch) currentStats.synced = parseInt(syncedMatch[1]);
+                if (cleanedMatch) currentStats.cleaned = parseInt(cleanedMatch[1]);
                 
                 // Detect completion - any summary line with stats means rule finished
-                const isSummaryLine = line.match(/^[✓⊙×]\s+(Copied|Synced|Skipped):/i) && Object.keys(currentStats).length > 0;
+                const isSummaryLine = line.match(/^[✓⊙×]\s+(Copied|Synced|Skipped):/i) || noChangesMatch;
                 
                 if (isSummaryLine) {
                     // This rule is done - mark as completed
@@ -745,6 +773,11 @@ let deviceStatus = null;
                     updateRuleProgress(currentRuleId, 'running', currentStats);
                 }
             }
+        }
+        
+        // Mark the last rule as completed if still active
+        if (currentRuleId) {
+            updateRuleProgress(currentRuleId, 'completed', currentStats);
         }
     }
     
