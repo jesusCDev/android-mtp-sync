@@ -597,7 +597,15 @@ def _sync_desktop_to_phone(src_dir: Path, dest_uri: str, rel_path: str,
         _fail(stats, _display(src_dir), err)
         return False
     if inode in visited_inodes:
-        return True  # already walked this directory via another path - not a failure
+        # A symlink cycle (or two paths reaching the same real directory): it
+        # is not re-walked, so its contents never reach expected_files. Like
+        # any other unwalkable entry in this function, that makes the scan
+        # incomplete - the phone's copy of anything under this name must not
+        # be deleted on the strength of an enumeration that never happened.
+        _fail(stats, rel_path or _display(src_dir),
+              "already visited via another path - not scanned again, "
+              "so the phone keeps whatever it has under this name")
+        return False
     visited_inodes.add(inode)
 
     try:

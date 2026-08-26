@@ -668,3 +668,44 @@ def test_sync_survives_a_file_that_vanishes_between_listing_and_stat(tmp_path, m
     assert phone.removed == []
     assert stats["errors"] == 1
     assert stats["deleted"] == 0
+
+
+def test_sync_refuses_to_delete_when_a_symlink_loops_back_to_an_ancestor(
+        tmp_path, monkeypatch, capsys):
+    """`dir/sub/loop -> dir`: the loop guard stops infinite recursion by never
+    re-walking `dir`'s contents from the symlinked path, so a phone file that
+    only exists under that symlinked path can never be proven extraneous - the
+    scan must count as incomplete, not silently 'complete'."""
+    phone = make_phone({
+        "Internal storage/Music/dir/real.txt": b"real",
+        "Internal storage/Music/dir/sub/loop/real.txt": b"stale",
+    }, monkeypatch)
+    src = tmp_path / "src"
+    d = src / "dir"
+    d.mkdir(parents=True)
+    (d / "real.txt").write_bytes(b"real")
+    (d / "sub").mkdir()
+    os.symlink(d, d / "sub" / "loop")
+
+    stats = check_shape(operations.run_sync_rule(
+        sync_rule(src, delete_extraneous=True), DEVICE))
+
+    assert phone.removed == []
+    assert phone.files["Internal storage/Music/dir/sub/loop/real.txt"] == b"stale"
+    assert stats["deleted"] == 0
+    assert stats["errors"] >= 1
+    assert "refus" in capsys.readouterr().out.lower()
+
+
+def test_sync_terminates_on_a_two_node_symlink_cycle(tmp_path, monkeypatch):
+    """a <-> b mutual symlinks must not recurse forever."""
+    phone = make_phone({}, monkeypatch)
+    src = tmp_path / "src"
+    (src / "a").mkdir(parents=True)
+    (src / "b").mkdir(parents=True)
+    os.symlink(src / "b", src / "a" / "link_to_b")
+    os.symlink(src / "a", src / "b" / "link_to_a")
+
+    stats = check_shape(operations.run_sync_rule(sync_rule(src), DEVICE))
+
+    assert phone.removed == []
