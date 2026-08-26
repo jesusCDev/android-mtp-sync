@@ -140,7 +140,7 @@ def run_for_connected_device(config: Dict[str, Any], verbose: bool = False, dry_
         
         print(f"\n{Colors.BOLD}Debug:{Colors.RESET}")
         print(f"  {Colors.DIM}To see connected MTP devices:{Colors.RESET} gio mount -li | grep -i mtp")
-        print(f"  {Colors.DIM}To check config:{Colors.RESET} cat ~/.config/phone-migration/config.json | jq .")
+        print(f"  {Colors.DIM}To check config:{Colors.RESET} cat {cfg.CONFIG_FILE} | jq .")
         
         # Send notification if enabled
         if notify:

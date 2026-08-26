@@ -1,12 +1,29 @@
-"""State management for resumable smart-copy operations."""
+"""State management for resumable backup operations.
 
+State is keyed by ``"<profile_name>:<rule_id>"`` - rule IDs restart at r-0001 in
+every profile, so a bare rule ID would make two phones share one backup state.
+
+On-disk shape::
+
+    {"work:r-0001": {"copied": [...], "failed": {path: error}, "total_files": 9,
+                     "last_run": "2026-08-26T12:00:00"}}
+
+Every read-modify-write of the file happens inside ``_acquire_lock`` (fcntl,
+POSIX only), so two processes/threads racing on ``save_rule_state`` for
+different keys can't drop each other's writes - the whole cycle is one
+lock hold, not a load-then-save pair each locked separately.
+"""
+
+import fcntl
 import json
 import os
-import fcntl
-from pathlib import Path
-from typing import Dict, List, Any, Set
-from datetime import datetime
 from contextlib import contextmanager
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, List, Set
+
+from .config import _atomic_write_json
+from .theme import Colors, Icons
 
 # State file location
 STATE_DIR = Path.home() / ".local" / "share" / "phone-migration"
@@ -18,215 +35,160 @@ LOCK_FILE = STATE_DIR / "state.lock"
 
 @contextmanager
 def _acquire_lock():
-    """Context manager for file-based locking (fcntl on POSIX systems).
-    
-    Ensures safe concurrent access to state.json. Blocks if another process
-    holds the lock.
+    """Serialize state.json reads/writes across processes/threads.
+
+    Blocks until the lock is free. fcntl locking is POSIX-only, matching the
+    rest of this tool's Linux/gio dependency.
     """
-    _ensure_state_dir()
-    
-    # Open lock file (create if doesn't exist)
-    lock_file_handle = None
+    LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with open(LOCK_FILE, 'w') as lock_file:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+
+def _read_state() -> Dict[str, Any]:
+    """Read the state file's raw contents. Caller must hold the lock.
+
+    A corrupt file is preserved (renamed to ``.corrupt``), never silently
+    reset - that would let the next save wipe every other rule's progress.
+    """
+    if not STATE_FILE.exists():
+        return {}
     try:
-        lock_file_handle = open(LOCK_FILE, 'w')
-        # Acquire exclusive lock (blocks until available)
-        fcntl.flock(lock_file_handle.fileno(), fcntl.LOCK_EX)
-        yield
-    finally:
-        if lock_file_handle:
-            try:
-                # Release lock
-                fcntl.flock(lock_file_handle.fileno(), fcntl.LOCK_UN)
-                lock_file_handle.close()
-            except:
-                pass  # Ignore cleanup errors
+        with open(STATE_FILE, 'r') as f:
+            return json.load(f)
+    except json.JSONDecodeError:
+        corrupt = STATE_FILE.with_name(STATE_FILE.name + ".corrupt")
+        os.replace(STATE_FILE, corrupt)
+        print(f"{Colors.WARNING}{Icons.WARN} State file was corrupt{Colors.RESET} "
+              f"{Colors.DIM}- moved to {corrupt}; resume progress starts over.{Colors.RESET}")
+        return {}
 
 
-def _ensure_state_dir() -> None:
-    """Ensure state directory exists."""
-    STATE_DIR.mkdir(parents=True, exist_ok=True)
+def _write_state(state: Dict[str, Any]) -> None:
+    """Write the state file atomically. Caller must hold the lock."""
+    _atomic_write_json(STATE_FILE, state)
 
 
-def _load_state_file() -> Dict[str, Any]:
-    """Load entire state file."""
-    _ensure_state_dir()
-    with _acquire_lock():
-        if not STATE_FILE.exists():
-            return {}
-        try:
-            with open(STATE_FILE, 'r') as f:
-                return json.load(f)
-        except (json.JSONDecodeError, IOError):
-            return {}
-
-
-def _save_state_file(state: Dict[str, Any]) -> None:
-    """Save entire state file atomically."""
-    _ensure_state_dir()
-    with _acquire_lock():
-        # Write to temp file first, then rename (atomic on POSIX)
-        temp_file = STATE_FILE.with_suffix('.tmp')
-        try:
-            with open(temp_file, 'w') as f:
-                json.dump(state, f, indent=2)
-            temp_file.rename(STATE_FILE)
-        except Exception as e:
-            if temp_file.exists():
-                temp_file.unlink()
-            raise e
-
-
-def load_rule_state(rule_id: str) -> Dict[str, Any]:
+def load_rule_state(state_key: str) -> Dict[str, Any]:
     """
     Load state for a specific rule.
-    
+
+    Args:
+        state_key: "profile_name:rule_id"
+
     Returns:
-        Dict with keys: copied (set), failed (list), status, last_run, total_files
+        Dict with keys: copied (set), failed (dict path -> error), total_files, last_run
     """
-    state = _load_state_file()
-    rule_state = state.get(rule_id, {})
-    
+    with _acquire_lock():
+        rule_state = _read_state().get(state_key, {})
+
     return {
         "copied": set(rule_state.get("copied", [])),
-        "failed": rule_state.get("failed", []),
-        "status": rule_state.get("status", "new"),
+        "failed": dict(rule_state.get("failed", {})),
+        "total_files": rule_state.get("total_files", 0),
         "last_run": rule_state.get("last_run", None),
-        "total_files": rule_state.get("total_files", 0)
     }
 
 
-def save_rule_state(rule_id: str, copied: Set[str], failed: List[str], 
-                     status: str, total_files: int = 0) -> None:
+def save_rule_state(state_key: str, copied: Set[str], failed: Dict[str, str],
+                    total_files: int = 0) -> None:
     """
     Save state for a specific rule.
-    
+
     Args:
-        rule_id: Rule identifier
+        state_key: "profile_name:rule_id"
         copied: Set of relative paths that were successfully copied
-        failed: List of relative paths that failed
-        status: "in_progress", "completed", or "failed"
+        failed: Map of relative path -> last error (one entry per path)
         total_files: Total number of files to copy
     """
-    state = _load_state_file()
-    
-    state[rule_id] = {
-        "copied": sorted(list(copied)),  # Convert set to sorted list for JSON
-        "failed": failed,
-        "status": status,
-        "last_run": datetime.now().isoformat(),
-        "total_files": total_files
-    }
-    
-    _save_state_file(state)
+    with _acquire_lock():
+        state = _read_state()
+        state[state_key] = {
+            "copied": sorted(copied),  # set -> sorted list for JSON
+            "failed": dict(failed),
+            "total_files": total_files,
+            "last_run": datetime.now().isoformat(),
+        }
+        _write_state(state)
 
 
-def mark_file_copied(rule_id: str, relative_path: str) -> None:
+def mark_file_copied(state_key: str, relative_path: str) -> None:
+    """Mark a single file as copied.
+
+    # ponytail: removed by Task 4 (operations.py still calls this per-file;
+    # Task 4 batches through save_rule_state every 25 files instead).
     """
-    Mark a single file as copied (for incremental updates during copy).
-    
-    Args:
-        rule_id: Rule identifier
-        relative_path: Relative path of the file that was copied
-    """
-    rule_state = load_rule_state(rule_id)
+    rule_state = load_rule_state(state_key)
     rule_state["copied"].add(relative_path)
-    rule_state["status"] = "in_progress"
-    
-    save_rule_state(
-        rule_id,
-        rule_state["copied"],
-        rule_state["failed"],
-        rule_state["status"],
-        rule_state["total_files"]
-    )
+    save_rule_state(state_key, rule_state["copied"], rule_state["failed"], rule_state["total_files"])
 
 
-def mark_file_failed(rule_id: str, relative_path: str, error: str = "") -> None:
+def mark_file_failed(state_key: str, relative_path: str, error: str = "") -> None:
+    """Mark a single file as failed.
+
+    # ponytail: removed by Task 4 (operations.py still calls this per-file;
+    # Task 4 batches through save_rule_state every 25 files instead).
     """
-    Mark a single file as failed.
-    
-    Args:
-        rule_id: Rule identifier
-        relative_path: Relative path of the file that failed
-        error: Optional error message
-    """
-    rule_state = load_rule_state(rule_id)
-    
-    # Add to failed list if not already there
-    failed_entry = {"path": relative_path, "error": error}
-    if failed_entry not in rule_state["failed"]:
-        rule_state["failed"].append(failed_entry)
-    
-    save_rule_state(
-        rule_id,
-        rule_state["copied"],
-        rule_state["failed"],
-        "in_progress",
-        rule_state["total_files"]
-    )
+    rule_state = load_rule_state(state_key)
+    rule_state["failed"][relative_path] = error
+    save_rule_state(state_key, rule_state["copied"], rule_state["failed"], rule_state["total_files"])
 
 
-def mark_rule_complete(rule_id: str) -> None:
+def mark_rule_complete(state_key: str) -> None:
+    """Mark a rule as completed by clearing its state."""
+    with _acquire_lock():
+        state = _read_state()
+        if state_key in state:
+            del state[state_key]
+            _write_state(state)
+
+
+def rename_profile(old_name: str, new_name: str) -> int:
+    """Re-key every rule's saved state from ``old_name:*`` to ``new_name:*``.
+
+    Returns the number of keys moved (0, with no file created, if there was
+    nothing to move).
     """
-    Mark a rule as completed and clear its state.
-    
-    Args:
-        rule_id: Rule identifier
-    """
-    state = _load_state_file()
-    if rule_id in state:
-        del state[rule_id]
-        _save_state_file(state)
+    with _acquire_lock():
+        state = _read_state()
+        prefix = f"{old_name}:"
+        matching = [key for key in state if key.startswith(prefix)]
+
+        for key in matching:
+            state[f"{new_name}:{key[len(prefix):]}"] = state.pop(key)
+
+        if matching:
+            _write_state(state)
+
+    return len(matching)
 
 
 def get_remaining_files(all_files: List[str], copied_files: Set[str]) -> List[str]:
-    """
-    Get list of files that still need to be copied.
-    
-    Args:
-        all_files: List of all file paths
-        copied_files: Set of already-copied file paths
-        
-    Returns:
-        List of file paths that haven't been copied yet
-    """
+    """Return the files that still need to be copied."""
     return [f for f in all_files if f not in copied_files]
 
 
-def has_resume_state(rule_id: str) -> bool:
-    """
-    Check if a rule has resumable state.
-    
-    Args:
-        rule_id: Rule identifier
-        
-    Returns:
-        True if there's state to resume from
-    """
-    rule_state = load_rule_state(rule_id)
-    return len(rule_state["copied"]) > 0 or rule_state["status"] == "in_progress"
+def has_resume_state(state_key: str) -> bool:
+    """True if a previous run left progress to resume from."""
+    rule_state = load_rule_state(state_key)
+    return bool(rule_state["copied"] or rule_state["failed"])
 
 
-def get_state_summary(rule_id: str) -> str:
-    """
-    Get a human-readable summary of the rule's state.
-    
-    Args:
-        rule_id: Rule identifier
-        
-    Returns:
-        Summary string
-    """
-    rule_state = load_rule_state(rule_id)
+def get_state_summary(state_key: str) -> str:
+    """Human-readable summary of a rule's saved progress."""
+    rule_state = load_rule_state(state_key)
     copied_count = len(rule_state["copied"])
     failed_count = len(rule_state["failed"])
     total = rule_state["total_files"]
-    
+
     if copied_count == 0:
         return "No previous progress"
-    
+
     if total > 0:
         percent = (copied_count / total) * 100
         return f"{copied_count}/{total} files ({percent:.1f}%) - {failed_count} failed"
-    else:
-        return f"{copied_count} files copied - {failed_count} failed"
+    return f"{copied_count} files copied - {failed_count} failed"

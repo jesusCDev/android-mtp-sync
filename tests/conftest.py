@@ -20,6 +20,7 @@ def isolate_user_files(tmp_path, monkeypatch):
     """Repoint every module-level config/state/history path at tmp_path."""
     monkeypatch.setattr(state, "STATE_DIR", tmp_path)
     monkeypatch.setattr(state, "STATE_FILE", tmp_path / "state.json")
+    monkeypatch.setattr(state, "LOCK_FILE", tmp_path / "state.lock")
     monkeypatch.setattr(cfg, "CONFIG_DIR", tmp_path / "xdg")
     monkeypatch.setattr(cfg, "CONFIG_FILE", tmp_path / "xdg" / "config.json")
     if hasattr(cfg, "LEGACY_CONFIG_FILE"):      # Task 3 adds the XDG migration path

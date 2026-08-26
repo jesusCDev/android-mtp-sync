@@ -251,7 +251,7 @@ class TestSmartCopyOperation(TestOperationsBase):
                                         mock_save_state, mock_load_state):
         """Test that smart_copy tracks which files have been copied."""
         # Setup state to be empty (first run)
-        mock_load_state.return_value = {"copied": set(), "failed": [], "total_files": 0}
+        mock_load_state.return_value = {"copied": set(), "failed": {}, "total_files": 0}
         mock_build.return_value = []  # Updated to just append to list
         
         # Mock _build_file_list to populate the file list

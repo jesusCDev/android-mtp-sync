@@ -2,13 +2,40 @@
 
 import json
 import os
+import shutil
+import tempfile
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
+
+from .gio_utils import shorten_path
+from .theme import Colors, Icons
 
 
-# Config file location
-CONFIG_DIR = Path.home() / "Programming" / "project-cli" / "phone-migration"
+# Config file location (XDG). LEGACY_CONFIG_FILE is the old dev-checkout path
+# that early versions wrote to; it is copied here once, never moved.
+CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "phone-migration"
 CONFIG_FILE = CONFIG_DIR / "config.json"
+LEGACY_CONFIG_FILE = Path.home() / "Programming" / "project-cli" / "phone-migration" / "config.json"
+
+
+def _atomic_write_json(path: Path, data: Any) -> None:
+    """Write JSON so an interrupted run never leaves a half-written file.
+
+    Also used by state.py - this is the only copy.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = tempfile.NamedTemporaryFile(
+        "w", dir=path.parent, prefix=f"{path.stem}.", suffix=".tmp", delete=False
+    )
+    try:
+        with tmp as f:
+            json.dump(data, f, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp.name, path)
+    except BaseException:
+        Path(tmp.name).unlink(missing_ok=True)
+        raise
 
 
 def _default_config() -> Dict[str, Any]:
@@ -21,20 +48,25 @@ def _default_config() -> Dict[str, Any]:
 
 def load_config() -> Dict[str, Any]:
     """Load configuration from JSON file, create default if missing."""
+    if not CONFIG_FILE.exists() and LEGACY_CONFIG_FILE.exists():
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(LEGACY_CONFIG_FILE, CONFIG_FILE)
+        print(f"{Colors.INFO}{Icons.INFO} Migrated config{Colors.RESET} "
+              f"{Colors.DIM}{shorten_path(LEGACY_CONFIG_FILE)}{Colors.RESET} "
+              f"{Colors.DIM}->{Colors.RESET} {Colors.PATH}{shorten_path(CONFIG_FILE)}{Colors.RESET}")
+
     if not CONFIG_FILE.exists():
         config = _default_config()
         save_config(config)
         return config
-    
+
     with open(CONFIG_FILE, 'r') as f:
         return json.load(f)
 
 
 def save_config(config: Dict[str, Any]) -> None:
-    """Save configuration to JSON file."""
-    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    with open(CONFIG_FILE, 'w') as f:
-        json.dump(config, f, indent=2)
+    """Save configuration to JSON file (atomically)."""
+    _atomic_write_json(CONFIG_FILE, config)
 
 
 def find_profile(config: Dict[str, Any], name: str) -> Optional[Dict[str, Any]]:
@@ -62,7 +94,7 @@ def add_profile(config: Dict[str, Any], profile: Dict[str, Any]) -> None:
         existing.update(profile)
     else:
         # Add new profile
-        config["profiles"].append(profile)
+        config.setdefault("profiles", []).append(profile)
 
 
 def generate_rule_id(profile: Dict[str, Any]) -> str:
@@ -169,7 +201,6 @@ def add_sync_rule(config: Dict[str, Any], profile_name: str, desktop_path: str, 
         "desktop_path": desktop_path,
         "phone_path": phone_path,
         "recursive": True,
-        "overwrite": True,
         "delete_extraneous": True,
         "manual_only": manual_only
     }
@@ -214,148 +245,109 @@ def edit_rule(config: Dict[str, Any], profile_name: str, rule_id: str,
 
 def print_profiles(config: Dict[str, Any]) -> None:
     """Print all configured profiles with color and formatting."""
-    # ANSI color codes
-    RESET = '\033[0m'
-    BOLD = '\033[1m'
-    DIM = '\033[2m'
-    GREEN = '\033[32m'
-    YELLOW = '\033[33m'
-    CYAN = '\033[36m'
-    BRIGHT_CYAN = '\033[96m'
-    BRIGHT_WHITE = '\033[97;1m'
-    
     profiles = config.get("profiles", [])
-    
+
     if not profiles:
-        print(f"\n{YELLOW}No profiles configured yet.{RESET}")
-        print(f"{DIM}Use: phone-sync --add-device to register your phone{RESET}")
+        print(f"\n{Colors.WARNING}No profiles configured yet.{Colors.RESET}")
+        print(f"{Colors.DIM}Use: phone-sync --add-device to register your phone{Colors.RESET}")
         return
-    
-    print(f"\n{BOLD}{BRIGHT_WHITE}Configured Profiles{RESET} {DIM}({len(profiles)} total){RESET}")
-    print(f"{DIM}{'─' * 70}{RESET}\n")
-    
+
+    print(f"\n{Colors.BOLD}{Colors.HEADER}Configured Profiles{Colors.RESET} {Colors.DIM}({len(profiles)} total){Colors.RESET}")
+    print(f"{Colors.SEPARATOR}{'─' * 70}{Colors.RESET}\n")
+
     for i, profile in enumerate(profiles, 1):
         name = profile.get("name", "unknown")
         device = profile.get("device", {})
         display_name = device.get("display_name", "Unknown")
         id_type = device.get("id_type", "")
         id_value = device.get("id_value", "")
-        rule_count = len(profile.get("rules", []))
-        
-        # Auto vs manual rule counts
         rules = profile.get("rules", [])
+        rule_count = len(rules)
+
+        # Auto vs manual rule counts
         manual_count = sum(1 for r in rules if r.get("manual_only", False))
         auto_count = rule_count - manual_count
-        
-        print(f"{BOLD}{BRIGHT_CYAN}📱 {name}{RESET}")
-        print(f"  {DIM}Device:{RESET} {GREEN}{display_name}{RESET}")
-        print(f"  {DIM}ID:{RESET}     {DIM}{id_type}={id_value}{RESET}")
-        
+
+        print(f"{Colors.BOLD}{Colors.ACCENT}{Icons.PHONE} {name}{Colors.RESET}")
+        print(f"  {Colors.DIM}Device:{Colors.RESET} {Colors.DEVICE_NAME}{display_name}{Colors.RESET}")
+        print(f"  {Colors.DIM}ID:{Colors.RESET}     {Colors.DIM}{id_type}={id_value}{Colors.RESET}")
+
         if rule_count > 0:
             rule_parts = []
             if auto_count > 0:
                 rule_parts.append(f"{auto_count} auto")
             if manual_count > 0:
-                rule_parts.append(f"{manual_count} {YELLOW}manual{RESET}")
+                rule_parts.append(f"{manual_count} {Colors.WARNING}manual{Colors.RESET}")
             rule_text = " + ".join(rule_parts)
-            print(f"  {DIM}Rules:{RESET}  {rule_text}")
+            print(f"  {Colors.DIM}Rules:{Colors.RESET}  {rule_text}")
         else:
-            print(f"  {DIM}Rules:{RESET}  {YELLOW}0{RESET} {DIM}(none configured){RESET}")
-        
+            print(f"  {Colors.DIM}Rules:{Colors.RESET}  {Colors.WARNING}0{Colors.RESET} {Colors.DIM}(none configured){Colors.RESET}")
+
         # Separator between profiles
         if i < len(profiles):
-            print(f"  {DIM}{'·' * 60}{RESET}")
+            print(f"  {Colors.SEPARATOR}{'·' * 60}{Colors.RESET}")
         print()
+
+
+# Mode -> (icon, color, label). "smart_copy" is the legacy name for "backup".
+_MODE_STYLE = {
+    "move": (Icons.MOVE, Colors.MOVED, "MOVE"),
+    "copy": (Icons.COPY, Colors.INFO, "COPY"),
+    "backup": (Icons.COPY, Colors.BACKED_UP, "BACKUP"),
+    "smart_copy": (Icons.COPY, Colors.BACKED_UP, "BACKUP"),
+    "sync": (Icons.SYNC, Colors.SYNCED, "SYNC"),
+}
 
 
 def print_rules(config: Dict[str, Any], profile_name: str) -> None:
     """Print rules for a specific profile with color and formatting."""
-    # ANSI color codes
-    RESET = '\033[0m'
-    BOLD = '\033[1m'
-    DIM = '\033[2m'
-    GREEN = '\033[32m'
-    YELLOW = '\033[33m'
-    BLUE = '\033[34m'
-    CYAN = '\033[36m'
-    BRIGHT_CYAN = '\033[96m'
-    BRIGHT_BLUE = '\033[94m'
-    BRIGHT_YELLOW = '\033[93m'
-    BRIGHT_WHITE = '\033[97;1m'
-    
-    # Shorten home path
-    def shorten(path: str) -> str:
-        return path.replace(str(Path.home()), '~', 1) if path else path
-    
     profile = find_profile(config, profile_name)
     if not profile:
-        print(f"{YELLOW}Profile '{profile_name}' not found{RESET}")
+        print(f"{Colors.WARNING}Profile '{profile_name}' not found{Colors.RESET}")
         return
-    
+
     rules = profile.get("rules", [])
     if not rules:
-        print(f"{YELLOW}No rules configured for profile '{profile_name}'{RESET}")
+        print(f"{Colors.WARNING}No rules configured for profile '{profile_name}'{Colors.RESET}")
         return
-    
+
     # Header
-    print(f"\n{BOLD}{BRIGHT_WHITE}Rules for profile '{profile_name}'{RESET} {DIM}({len(rules)} total){RESET}")
-    print(f"{DIM}{'─' * 70}{RESET}\n")
-    
+    print(f"\n{Colors.BOLD}{Colors.HEADER}Rules for profile '{profile_name}'{Colors.RESET} {Colors.DIM}({len(rules)} total){Colors.RESET}")
+    print(f"{Colors.SEPARATOR}{'─' * 70}{Colors.RESET}\n")
+
     for i, rule in enumerate(rules, 1):
         rule_id = rule.get("id", "")
         mode = rule.get("mode", "")
         phone_path = rule.get("phone_path", "")
         desktop_path = rule.get("desktop_path", "")
         manual_only = rule.get("manual_only", False)
-        
-        # Mode-specific colors and icons
-        if mode == "move":
-            mode_icon = "📤"
-            mode_color = BRIGHT_BLUE
-            mode_text = "MOVE"
-        elif mode == "copy":
-            mode_icon = "📋"
-            mode_color = BRIGHT_CYAN
-            mode_text = "COPY"
-        elif mode == "backup":
-            mode_icon = "💾"
-            mode_color = BRIGHT_YELLOW
-            mode_text = "BACKUP"
-        elif mode == "smart_copy":  # Legacy support
-            mode_icon = "💾"
-            mode_color = BRIGHT_YELLOW
-            mode_text = "BACKUP"
-        elif mode == "sync":
-            mode_icon = "🔄"
-            mode_color = GREEN
-            mode_text = "SYNC"
-        else:
-            mode_icon = "❓"
-            mode_color = YELLOW
-            mode_text = mode.upper()
-        
+
+        mode_icon, mode_color, mode_text = _MODE_STYLE.get(
+            mode, (Icons.SEARCH, Colors.WARNING, mode.upper())
+        )
+
         # Manual tag
-        manual_tag = f" {DIM}[{BRIGHT_YELLOW}MANUAL{RESET}{DIM}]{RESET}" if manual_only else ""
-        
+        manual_tag = f" {Colors.DIM}[{Colors.WARNING}MANUAL{Colors.RESET}{Colors.DIM}]{Colors.RESET}" if manual_only else ""
+
         # Rule header
-        print(f"{DIM}[{rule_id}]{RESET} {mode_icon} {BOLD}{mode_color}{mode_text}{RESET}{manual_tag}")
-        
+        print(f"{Colors.DIM}[{Colors.RESET}{Colors.RULE_ID}{rule_id}{Colors.RESET}{Colors.DIM}]{Colors.RESET} {mode_icon} {Colors.BOLD}{mode_color}{mode_text}{Colors.RESET}{manual_tag}")
+
         # Paths and action
-        if mode in ["move", "copy", "backup", "smart_copy"]:
-            print(f"  {DIM}Phone:  {RESET} {CYAN}{phone_path}{RESET}")
-            print(f"  {DIM}Desktop:{RESET} {GREEN}{shorten(desktop_path)}{RESET}")
+        if mode in ("move", "copy", "backup", "smart_copy"):
+            print(f"  {Colors.DIM}Phone:  {Colors.RESET} {Colors.PATH}{phone_path}{Colors.RESET}")
+            print(f"  {Colors.DIM}Desktop:{Colors.RESET} {Colors.PATH}{shorten_path(desktop_path)}{Colors.RESET}")
             if mode == "move":
-                print(f"  {DIM}Action: {RESET} Copy to desktop, then {YELLOW}delete from phone{RESET}")
-            elif mode in ["backup", "smart_copy"]:
-                print(f"  {DIM}Action: {RESET} {BRIGHT_CYAN}Backup{RESET} to desktop {DIM}(resumable, no deletions){RESET}")
+                print(f"  {Colors.DIM}Action: {Colors.RESET} Copy to desktop, then {Colors.DELETED}delete from phone{Colors.RESET}")
+            elif mode in ("backup", "smart_copy"):
+                print(f"  {Colors.DIM}Action: {Colors.RESET} {Colors.BACKED_UP}Backup{Colors.RESET} to desktop {Colors.DIM}(resumable, no deletions){Colors.RESET}")
             else:
-                print(f"  {DIM}Action: {RESET} Copy to desktop, {GREEN}keep on phone{RESET}")
+                print(f"  {Colors.DIM}Action: {Colors.RESET} Copy to desktop, {Colors.SUCCESS}keep on phone{Colors.RESET}")
         elif mode == "sync":
-            print(f"  {DIM}Desktop:{RESET} {GREEN}{shorten(desktop_path)}{RESET} {DIM}(source){RESET}")
-            print(f"  {DIM}Phone:  {RESET} {CYAN}{phone_path}{RESET}")
-            print(f"  {DIM}Action: {RESET} Mirror desktop to phone {DIM}(desktop is source of truth){RESET}")
-        
+            print(f"  {Colors.DIM}Desktop:{Colors.RESET} {Colors.PATH}{shorten_path(desktop_path)}{Colors.RESET} {Colors.DIM}(source){Colors.RESET}")
+            print(f"  {Colors.DIM}Phone:  {Colors.RESET} {Colors.PATH}{phone_path}{Colors.RESET}")
+            print(f"  {Colors.DIM}Action: {Colors.RESET} Mirror desktop to phone {Colors.DIM}(desktop is source of truth){Colors.RESET}")
+
         # Separator between rules (not after last one)
         if i < len(rules):
-            print(f"  {DIM}{'·' * 60}{RESET}")
+            print(f"  {Colors.SEPARATOR}{'·' * 60}{Colors.RESET}")
         print()
