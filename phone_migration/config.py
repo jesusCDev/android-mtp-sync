@@ -78,7 +78,15 @@ def find_profile(config: Dict[str, Any], name: str) -> Optional[Dict[str, Any]]:
 
 
 def find_profile_by_device_id(config: Dict[str, Any], id_type: str, id_value: str) -> Optional[Dict[str, Any]]:
-    """Find a profile by device ID."""
+    """Find a profile by device ID.
+
+    Never matches on an empty id_type/id_value: device_fingerprint returns
+    ("", "") for serial-less phones, and a profile can be persisted with
+    id_type/id_value both "" - equality matching would then bind every
+    serial-less phone to that one profile.
+    """
+    if not id_type or not id_value:
+        return None
     for profile in config.get("profiles", []):
         device = profile.get("device", {})
         if device.get("id_type") == id_type and device.get("id_value") == id_value:

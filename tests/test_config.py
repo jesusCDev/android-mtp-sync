@@ -101,6 +101,20 @@ def test_find_profile_by_device_id():
     assert cfg.find_profile_by_device_id({}, "serial", "abc") is None
 
 
+def test_find_profile_by_device_id_rejects_empty_ids():
+    """device_fingerprint returns ("", "") for serial-less phones, and the web
+    profile-create route can persist a profile with id_type/id_value both "".
+    Equality matching on empty strings would then bind every serial-less phone
+    to that profile - empty ids must never match, even each other."""
+    config = {"profiles": [{"name": "no-serial", "device": {"id_type": "", "id_value": ""}}]}
+
+    assert cfg.find_profile_by_device_id(config, "", "") is None
+
+    # A normal lookup (non-empty ids) is unaffected.
+    config["profiles"].append({"name": "phone", "device": {"id_type": "serial", "id_value": "abc"}})
+    assert cfg.find_profile_by_device_id(config, "serial", "abc")["name"] == "phone"
+
+
 def test_edit_rule_can_turn_manual_only_off():
     config = {"profiles": [{"name": "phone", "rules": [{"id": "r-0001", "manual_only": True}]}]}
 
