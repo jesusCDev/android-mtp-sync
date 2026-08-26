@@ -73,6 +73,29 @@ def _write_state(state: Dict[str, Any]) -> None:
     _atomic_write_json(STATE_FILE, state)
 
 
+def _coerce_failed(failed: Any) -> Dict[str, str]:
+    """Coerce an on-disk ``failed`` value to the path -> error dict shape.
+
+    A pre-port state.json stores ``failed`` as a list of {"path", "error"}
+    dicts (or bare path strings); ``dict()`` on that list silently produces a
+    bogus single-pair dict and drops every record, so this can't be a plain
+    ``dict(...)`` cast.
+    """
+    # ponytail: bare (non "profile:rule_id") legacy keys are read as-is, never
+    # migrated - such a rule just resumes by size check instead of by state.
+    if isinstance(failed, dict):
+        return dict(failed)
+    if isinstance(failed, list):
+        result = {}
+        for item in failed:
+            if isinstance(item, dict) and item.get("path"):
+                result[item["path"]] = item.get("error", "")
+            elif isinstance(item, str):
+                result[item] = ""
+        return result
+    return {}
+
+
 def load_rule_state(state_key: str) -> Dict[str, Any]:
     """
     Load state for a specific rule.
@@ -88,7 +111,7 @@ def load_rule_state(state_key: str) -> Dict[str, Any]:
 
     return {
         "copied": set(rule_state.get("copied", [])),
-        "failed": dict(rule_state.get("failed", {})),
+        "failed": _coerce_failed(rule_state.get("failed", {})),
         "total_files": rule_state.get("total_files", 0),
         "last_run": rule_state.get("last_run", None),
     }

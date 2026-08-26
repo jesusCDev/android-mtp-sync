@@ -170,3 +170,30 @@ def test_concurrent_saves_to_different_keys_do_not_corrupt_state(state_file):
     assert state.load_rule_state("home:r-0001")["copied"] == {"home:r-0001-49.jpg"}
     leftovers = [p.name for p in state_file.parent.iterdir() if p.suffix == ".tmp"]
     assert leftovers == []
+
+
+def test_load_rule_state_coerces_pre_port_list_shaped_failed(state_file):
+    """A pre-port state.json stores failed as a list of {"path", "error"}
+    dicts (and lives under a bare rule_id key - legacy keys are never
+    migrated to "profile:rule_id"; such a rule just resumes by size check
+    instead of by state). dict(list_of_dicts) silently produced a bogus
+    single-pair dict and dropped every record - must coerce instead."""
+    state_file.write_text(json.dumps({
+        "r-0001": {
+            "copied": ["a.jpg", "b.jpg"],
+            "failed": [
+                {"path": "c.jpg", "error": "boom"},
+                {"path": "d.jpg", "error": "bang"},
+            ],
+            "total_files": 4,
+        }
+    }))
+
+    loaded = state.load_rule_state("r-0001")
+
+    assert loaded["copied"] == {"a.jpg", "b.jpg"}
+    assert loaded["failed"] == {"c.jpg": "boom", "d.jpg": "bang"}
+
+    state.save_rule_state("r-0001", loaded["copied"], loaded["failed"], loaded["total_files"])
+    on_disk = json.loads(state_file.read_text())
+    assert on_disk["r-0001"]["failed"] == {"c.jpg": "boom", "d.jpg": "bang"}
