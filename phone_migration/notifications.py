@@ -43,6 +43,9 @@ def send_notification(
             f"--urgency={urgency}",
             f"--icon={icon}",
             f"--expire-time={timeout}",
+            # Everything after this is text, not options: a title or body that
+            # starts with "-" would otherwise be parsed as a flag.
+            "--",
             title,
             message
         ]
@@ -56,7 +59,7 @@ def send_notification(
         
         return result.returncode == 0
     
-    except (subprocess.TimeoutExpired, FileNotFoundError, Exception):
+    except (FileNotFoundError, subprocess.SubprocessError):
         return False
 
 
@@ -81,11 +84,11 @@ def notify_completion(stats: dict, dry_run: bool = False) -> None:
     # Build message
     parts = []
     if moved_count > 0:
-        parts.append(f"📤 {moved_count} moved")
+        parts.append(f"{moved_count} moved")
     if backed_up_count > 0:
-        parts.append(f"📋 {backed_up_count} backed up")
+        parts.append(f"{backed_up_count} backed up")
     if synced_count > 0:
-        parts.append(f"🔄 {synced_count} synced")
+        parts.append(f"{synced_count} synced")
     
     if not parts:
         parts.append(f"{total_copied} files processed")
@@ -94,14 +97,14 @@ def notify_completion(stats: dict, dry_run: bool = False) -> None:
     
     # Add error count if any
     if total_errors > 0:
-        message += f"\n⚠️ {total_errors} error(s)"
+        message += f"\n{total_errors} errors"
         urgency = "critical"
         icon = "dialog-warning"
-        title = "📱 Phone Sync - Completed with Errors"
+        title = f"Phone Migration: {total_errors} errors"
     else:
         urgency = "normal"
         icon = "phone"
-        title = "📱 Phone Sync - Complete"
+        title = "Phone Migration: completed"
     
     send_notification(
         title=title,
@@ -120,7 +123,7 @@ def notify_error(error_message: str) -> None:
         error_message: Error description
     """
     send_notification(
-        title="📱 Phone Sync - Error",
+        title="Phone Migration: error",
         message=error_message,
         urgency="critical",
         icon="dialog-error",
@@ -131,7 +134,7 @@ def notify_error(error_message: str) -> None:
 def notify_device_not_found() -> None:
     """Send notification when device is not detected."""
     send_notification(
-        title="📱 Phone Sync - Device Not Found",
+        title="Phone Migration: device not found",
         message="Phone not connected or not registered.\nConnect phone and enable File Transfer mode.",
         urgency="normal",
         icon="phone-disconnect",
