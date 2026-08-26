@@ -1,725 +1,732 @@
-"""File operations for move and sync rules."""
+"""File operations for copy, move, backup and sync rules.
+
+Every ``run_*_rule`` returns its counters plus ``"files"``: one entry per file
+the rule touched, shaped ``{"action", "src", "dst", "error"}``. Task 6 feeds
+those straight into ``RunResult`` - nothing parses the printed lines.
+
+``action`` names the outcome: ``copied`` / ``moved`` / ``synced`` for a
+transfer, ``renamed`` in place of those when a duplicate forced a new name,
+plus ``skipped``, ``deleted``, ``folder`` and ``failed``. ``src`` is the phone
+path relative to the rule root and ``dst`` the desktop path - swapped for sync,
+whose source of truth is the desktop.
+
+A rule never raises: an unusable desktop path or a failed listing is counted in
+``errors``, recorded in ``files``, and the rule returns what it managed to do.
+
+Two safety rules run through all of this:
+
+* nothing is deleted from the phone that was not first copied **and verified
+  byte-count-equal** to the source;
+* under ``gio_utils.DRY_RUN`` nothing is created, written or removed - not the
+  destination tree, not the resume state.
+"""
 
 import os
+import unicodedata
 from pathlib import Path
-from typing import Any, Dict, Set
+from typing import Any, Dict, List, Optional, Set, Tuple
+
 from . import gio_utils, paths, state
+from .gio_utils import GioError
+from .theme import Colors, Icons
 
-# ANSI color codes
-class Colors:
-    RESET = '\033[0m'
-    BOLD = '\033[1m'
-    DIM = '\033[2m'
-    RED = '\033[31m'
-    GREEN = '\033[32m'
-    YELLOW = '\033[33m'
-    BLUE = '\033[34m'
-    CYAN = '\033[36m'
-    WHITE = '\033[97m'
-    BRIGHT_BLUE = '\033[94m'
-    BRIGHT_CYAN = '\033[96m'
-    BRIGHT_YELLOW = '\033[93m'
-    BRIGHT_WHITE = '\033[97;1m'
-
-def shorten_path(path_str: str) -> str:
-    """Replace home directory with ~ for readability."""
-    home = str(Path.home())
-    if isinstance(path_str, Path):
-        path_str = str(path_str)
-    if path_str.startswith(home):
-        return path_str.replace(home, '~', 1)
-    return path_str
+# ponytail: flush every 25 files, per-file writes were O(n^2)
+SAVE_EVERY = 25
 
 
-def run_copy_rule(rule: Dict[str, Any], device: Dict[str, Any], verbose: bool = False, transfer_tracker=None, rename_duplicates: bool = True) -> Dict[str, int]:
-    """
-    Execute a copy rule: copy from phone to desktop without deleting from phone.
+# --- shared plumbing ---------------------------------------------------------
 
-    Args:
-        rule: Rule dictionary with phone_path, desktop_path
-        device: Device dictionary with activation_uri
-        verbose: Print verbose output
-        transfer_tracker: Optional TransferStats instance for tracking
+def _display(path) -> str:
+    """A desktop path as the user writes it: ``~/Pictures/a.jpg``."""
+    return gio_utils.shorten_path(str(path))
 
-    Returns:
-        Dictionary with counts: copied, renamed, errors
-    """
-    activation_uri = device.get("activation_uri", "")
-    phone_path = rule.get("phone_path", "")
-    desktop_path_str = rule.get("desktop_path", "")
 
-    # Build URIs and paths
-    source_uri = paths.build_phone_uri(activation_uri, phone_path)
-    dest_dir = paths.expand_desktop(desktop_path_str)
+def _record(stats: Dict[str, Any], action: str, src: str,
+            dst: Optional[str] = None, error: Optional[str] = None) -> None:
+    stats["files"].append({"action": action, "src": src, "dst": dst, "error": error})
 
-    print(f"\n{Colors.BOLD}{Colors.BRIGHT_BLUE}📋 Copy:{Colors.RESET} {Colors.CYAN}{phone_path}{Colors.RESET} {Colors.DIM}→{Colors.RESET} {Colors.GREEN}{shorten_path(dest_dir)}{Colors.RESET}\n")
 
-    # Create destination directory
-    paths.ensure_dir(dest_dir)
+def _fail(stats: Dict[str, Any], src: str, error, dst: Optional[str] = None) -> None:
+    """Count an error, log it structurally, and say so on stdout."""
+    stats["errors"] += 1
+    _record(stats, "failed", src, dst, str(error))
+    print(f"  {Colors.ERROR}{Icons.FAIL}{Colors.RESET} {src}: {Colors.DIM}{error}{Colors.RESET}")
 
-    # Track statistics
-    stats = {"copied": 0, "renamed": 0, "errors": 0, "skipped": 0, "folders": 0}
 
-    # Recursively process phone directory (no deletion)
-    _process_copy_directory(source_uri, dest_dir, stats, verbose, transfer_tracker=transfer_tracker, rename_duplicates=rename_duplicates)
+def _endpoints(rule: Dict[str, Any], device: Dict[str, Any]) -> Tuple[str, Path]:
+    """(phone URI, desktop dir). Raises ValueError on an empty desktop path."""
+    source_uri = paths.build_phone_uri(device.get("activation_uri", ""),
+                                       rule.get("phone_path", ""))
+    return source_uri, paths.expand_desktop(rule.get("desktop_path", ""))
 
-    # Align based on longest label "Renamed:" (8 chars including emoji/symbol)
-    print(f"\n  {Colors.GREEN}✓ Copied:{Colors.RESET}   {stats['copied']} files")
-    if stats["folders"] > 0:
-        print(f" {Colors.BRIGHT_WHITE}📁 Folders:{Colors.RESET}  {stats['folders']}")
-    if stats["renamed"] > 0:
-        print(f"  {Colors.YELLOW}↻ Renamed:{Colors.RESET}  {stats['renamed']} (duplicates)")
-    if stats["skipped"] > 0:
-        print(f"  {Colors.CYAN}⊙ Exists:{Colors.RESET}   {stats['skipped']} files")
-    if stats["errors"] > 0:
-        print(f"  {Colors.YELLOW}⨠ Errors:{Colors.RESET}   {stats['errors']}")
 
+def _ensure_dir(path: Path) -> None:
+    """Create a desktop directory - except in a dry run, which creates nothing."""
+    if not gio_utils.DRY_RUN:
+        paths.ensure_dir(path)
+
+
+def _listing(uri: str, display: str, stats: Dict[str, Any]) -> Optional[List[str]]:
+    """Entry names, or None when gio could not list them. A failed listing is
+    never an empty directory - callers must not delete anything under it."""
+    try:
+        return gio_utils.gio_list(uri)
+    except GioError as err:
+        _fail(stats, display, err)
+        return None
+
+
+def _is_regular(info: Dict[str, str]) -> bool:
+    entry_type = info.get("standard::type", "")
+    return "regular" in entry_type.lower() or entry_type == "1"
+
+
+def _new_stats(*names: str) -> Dict[str, Any]:
+    stats: Dict[str, Any] = {name: 0 for name in names}
+    stats["files"] = []
     return stats
 
 
-def _process_copy_directory(source_uri: str, dest_dir: Path, 
-                            stats: Dict[str, int], verbose: bool, in_subfolder: bool = False, transfer_tracker=None, rename_duplicates: bool = True) -> None:
-    """Recursively process a directory for copy operation (no deletion).
+# --- phone -> desktop (copy and move share one walk) -------------------------
 
-    Args:
-        in_subfolder: True if we're inside a subfolder (to hide individual file output)
-        transfer_tracker: Optional TransferStats instance for tracking
-    """
-    # List entries in source directory
-    entries = gio_utils.gio_list(source_uri)
-
-    for entry in entries:
-        entry_uri = f"{source_uri}/{entry}" if source_uri.endswith('/') else f"{source_uri}/{entry}"
-
-        # Get entry info to determine if it's a file or directory
-        info = gio_utils.gio_info(entry_uri)
-        entry_type = info.get("standard::type", "")
-
-        # Check multiple indicators for directories
-        is_dir = (
-            "directory" in entry_type.lower() or
-            entry_type == "2" or
-            info.get("standard::is-directory", "").lower() == "true"
-        )
-
-        if is_dir:
-            # Create corresponding subdirectory on desktop
-            sub_dest_dir = dest_dir / entry
-            sub_dest_short = shorten_path(sub_dest_dir)
-            paths.ensure_dir(sub_dest_dir)
-            stats["folders"] += 1
-            print(f"  {Colors.BRIGHT_WHITE}📦{Colors.RESET} {Colors.BOLD}{entry}/{Colors.RESET} {Colors.DIM}→ {sub_dest_short}{Colors.RESET}")
-
-            # Recurse into subdirectory (track file count, mark as in_subfolder)
-            folder_stats_before = stats["copied"]
-            _process_copy_directory(entry_uri, sub_dest_dir, stats, verbose, in_subfolder=True, transfer_tracker=transfer_tracker, rename_duplicates=rename_duplicates)
-            files_in_folder = stats["copied"] - folder_stats_before
-            if files_in_folder > 0 and not verbose:
-                print(f"     {Colors.DIM}({files_in_folder} files){Colors.RESET}")
-
-        elif "regular" in entry_type.lower() or entry_type == "1":  # Type 1 is regular file
-            # Determine destination file path
-            dest_file = paths.next_available_name(dest_dir, entry, rename_duplicates=rename_duplicates)
-            
-            # Skip file if conflict and rename_duplicates is False
-            if dest_file is None:
-                stats["skipped"] += 1
-                if verbose:
-                    print(f"  {Colors.DIM}Skipped (exists):{Colors.RESET} {entry}")
-                continue
-
-            # Check if needs rename due to duplicate
-            will_rename = dest_file.name != entry
-            if will_rename:
-                stats["renamed"] += 1
-                # Show rename with full destination path (only if not in subfolder or verbose)
-                if (gio_utils.DRY_RUN or verbose) and not in_subfolder:
-                    dest_short = shorten_path(dest_file)
-                    print(f"  {Colors.YELLOW}↻{Colors.RESET} {Colors.DIM}{entry}{Colors.RESET} → {Colors.YELLOW}{dest_file.name}{Colors.RESET} {Colors.DIM}(duplicate → {dest_short}){Colors.RESET}")
-
-            # Get file size for transfer tracking
-            file_size = gio_utils.get_file_size(info)
-            
-            # Copy file - show root level files (not in subfolder), but not if already shown via rename
-            show_copy = (not will_rename and not in_subfolder) or verbose
-            if gio_utils.gio_copy(entry_uri, str(dest_file), recursive=False, verbose=show_copy):
-                # Verify copy succeeded (skip verification in dry-run mode)
-                if gio_utils.DRY_RUN:
-                    # In dry-run, just count it as successful
-                    stats["copied"] += 1
-                    # Track transfer stats (use estimated size in dry-run)
-                    if transfer_tracker and file_size:
-                        transfer_tracker.add_file(file_size)
-                elif dest_file.exists() and dest_file.stat().st_size > 0:
-                    stats["copied"] += 1
-                    # Track actual transferred bytes
-                    if transfer_tracker:
-                        actual_size = dest_file.stat().st_size
-                        transfer_tracker.add_file(actual_size)
-                else:
-                    stats["errors"] += 1
-                    if verbose:
-                        print(f"  Warning: Copy verification failed for {entry}")
-            else:
-                stats["errors"] += 1
-
-
-def run_backup_rule(rule: Dict[str, Any], device: Dict[str, Any], verbose: bool = False, transfer_tracker=None, rename_duplicates: bool = False) -> Dict[str, int]:
-    """
-    Execute a backup rule: resumable copy with progress tracking.
-    
-    Args:
-        rule: Rule dictionary with phone_path, desktop_path, id
-        device: Device dictionary with activation_uri
-        verbose: Print verbose output
-        transfer_tracker: Optional TransferStats instance for tracking
-        rename_duplicates: Default False for backup (do nothing on conflicts)
-    
-    Returns:
-        Dictionary with counts: copied, resumed, skipped, failed, errors
-    """
-    activation_uri = device.get("activation_uri", "")
+def run_copy_rule(rule: Dict[str, Any], device: Dict[str, Any], verbose: bool = False,
+                  transfer_tracker=None, rename_duplicates: bool = True) -> Dict[str, Any]:
+    """Copy a phone directory to the desktop, leaving the phone untouched."""
+    stats = _new_stats("copied", "renamed", "errors", "skipped", "folders")
     phone_path = rule.get("phone_path", "")
-    desktop_path_str = rule.get("desktop_path", "")
-    rule_id = rule.get("id", "unknown")
-    
-    # Build URIs and paths
-    source_uri = paths.build_phone_uri(activation_uri, phone_path)
-    dest_dir = paths.expand_desktop(desktop_path_str)
-    
-    print(f"\n{Colors.BOLD}{Colors.BRIGHT_YELLOW}💾 Backup:{Colors.RESET} {Colors.CYAN}{phone_path}{Colors.RESET} {Colors.DIM}→{Colors.RESET} {Colors.GREEN}{shorten_path(dest_dir)}{Colors.RESET}")
-    
-    # Create destination directory
-    paths.ensure_dir(dest_dir)
-    
-    # Load previous state
-    rule_state = state.load_rule_state(rule_id)
-    already_copied = rule_state["copied"]
-    
-    # Show resume info if applicable
-    if len(already_copied) > 0:
-        print(f"\n  {Colors.CYAN}ℹ️  Resuming from previous run{Colors.RESET}")
-        print(f"  {Colors.GREEN}✓ Already copied:{Colors.RESET} {len(already_copied)} files")
-    
-    print(f"\n  {Colors.DIM}Scanning source directory...{Colors.RESET}")
-    
-    # Build list of ALL files in source (recursive)
-    all_files = []
-    _build_file_list(source_uri, "", all_files)
-    
-    total_files = len(all_files)
-    if total_files == 0:
-        print(f"  {Colors.YELLOW}No files found in source directory{Colors.RESET}")
-        return {"copied": 0, "resumed": len(already_copied), "skipped": 0, "failed": 0, "errors": 0}
-    
-    # Filter out already-copied files
-    remaining_files = [f for f in all_files if f not in already_copied]
-    
-    print(f"  {Colors.DIM}Found:{Colors.RESET} {total_files} total files")
-    if len(already_copied) > 0:
-        print(f"  {Colors.DIM}→ Remaining:{Colors.RESET} {len(remaining_files)} files to copy\n")
-    else:
-        print()
-    
-    # Track statistics
-    stats = {
-        "copied": 0,
-        "resumed": len(already_copied),
-        "skipped": 0,  # Files skipped due to conflicts (when rename_duplicates=False)
-        "failed": 0,   # Actual copy failures
-        "errors": 0    # Other errors
-    }
-    
-    # Save initial state with total count
-    state.save_rule_state(rule_id, already_copied, rule_state["failed"], "in_progress", total_files)
-    
-    # Copy remaining files one by one
-    for i, rel_path in enumerate(remaining_files, 1):
-        # Build source and dest paths
-        file_parts = rel_path.split('/')
-        current_uri = source_uri
-        for part in file_parts:
-            current_uri = f"{current_uri}/{part}" if current_uri.endswith('/') else f"{current_uri}/{part}"
-        
-        # Destination path
-        dest_file_path = dest_dir / rel_path
-        paths.ensure_dir(dest_file_path.parent)
-        
-        # Check for duplicates and get final destination
-        dest_file = paths.next_available_name(dest_file_path.parent, dest_file_path.name, rename_duplicates=rename_duplicates)
-        
-        # Skip file if conflict and rename_duplicates is False
-        if dest_file is None:
-            stats["skipped"] += 1
-            state.mark_file_failed(rule_id, rel_path, "Skipped due to naming conflict")
-            continue
-        
-        # Progress indicator
-        current_total = len(already_copied) + i
-        percent = (current_total / total_files) * 100
-        
-        if verbose or (i % 10 == 0):  # Show every 10th file or all in verbose
-            # Use full relative path for better file identification
-            display_path = rel_path
-            print(f"  {Colors.DIM}[{current_total}/{total_files} - {percent:.1f}%]{Colors.RESET} {display_path}")
-        
-        # Try to copy the file
-        try:
-            if gio_utils.gio_copy(current_uri, str(dest_file), recursive=False, verbose=False):
-                # Verify copy
-                if gio_utils.DRY_RUN or (dest_file.exists() and dest_file.stat().st_size > 0):
-                    stats["copied"] += 1
-                    # Mark as copied in state
-                    state.mark_file_copied(rule_id, rel_path)
-                    # Track transfer stats
-                    if transfer_tracker and dest_file.exists():
-                        actual_size = dest_file.stat().st_size
-                        transfer_tracker.add_file(actual_size)
-                else:
-                    stats["failed"] += 1
-                    state.mark_file_failed(rule_id, rel_path, "Copy verification failed")
-            else:
-                stats["failed"] += 1
-                state.mark_file_failed(rule_id, rel_path, "Copy command failed")
-        except KeyboardInterrupt:
-            # Handle Ctrl+C gracefully
-            print(f"\n\n  {Colors.YELLOW}⚠ Interrupted!{Colors.RESET} Progress saved.")
-            print(f"  {Colors.CYAN}📋 To resume:{Colors.RESET} phone-sync --run -r {rule_id} -y\n")
-            raise
-        except Exception as e:
+
+    try:
+        source_uri, dest_dir = _endpoints(rule, device)
+    except ValueError as err:
+        _fail(stats, phone_path, err)
+        return stats
+
+    print(f"\n{Colors.BOLD}{Colors.INFO}{Icons.COPY} Copy:{Colors.RESET} "
+          f"{Colors.PATH}{phone_path}{Colors.RESET} {Colors.DIM}{Icons.ARROW}{Colors.RESET} "
+          f"{Colors.PATH}{_display(dest_dir)}{Colors.RESET}\n")
+
+    _ensure_dir(dest_dir)
+    _pull_directory(source_uri, dest_dir, "", stats, verbose,
+                    rename_duplicates, transfer_tracker)
+    _print_pull_summary(stats, "Copied")
+    return stats
+
+
+def run_move_rule(rule: Dict[str, Any], device: Dict[str, Any], verbose: bool = False,
+                  transfer_tracker=None, rename_duplicates: bool = True) -> Dict[str, Any]:
+    """Copy a phone directory to the desktop, then delete the originals.
+
+    Only files whose desktop copy matches the source byte count are deleted;
+    everything else stays on the phone and is counted as an error.
+    """
+    stats = _new_stats("copied", "renamed", "deleted", "errors", "skipped", "folders")
+    phone_path = rule.get("phone_path", "")
+
+    try:
+        source_uri, dest_dir = _endpoints(rule, device)
+    except ValueError as err:
+        _fail(stats, phone_path, err)
+        return stats
+
+    print(f"\n{Colors.BOLD}{Colors.MOVED}{Icons.MOVE} Move:{Colors.RESET} "
+          f"{Colors.PATH}{phone_path}{Colors.RESET} {Colors.DIM}{Icons.ARROW}{Colors.RESET} "
+          f"{Colors.PATH}{_display(dest_dir)}{Colors.RESET}\n")
+
+    _ensure_dir(dest_dir)
+    verified: List[Tuple[str, str, str, str]] = []
+    listed_everything = _pull_directory(source_uri, dest_dir, "", stats, verbose,
+                                        rename_duplicates, transfer_tracker, verified)
+
+    # SAFETY: `verified` holds only entries `_pull_file` appended after a
+    # size-verified successful copy (dry-run: gio_copy reported success under
+    # DRY_RUN; execute: dest_file exists and its byte count matches the
+    # source). Nothing below this line is ever reached for an unverified copy.
+    for entry_uri, entry_rel, dest_display, action in verified:
+        if gio_utils.gio_remove(entry_uri, verbose=verbose):
+            stats["deleted"] += 1
+            _record(stats, action, entry_rel, dest_display)
+        else:
             stats["errors"] += 1
-            stats["failed"] += 1
-            state.mark_file_failed(rule_id, rel_path, str(e))
-            if verbose:
-                print(f"  {Colors.RED}Error:{Colors.RESET} {e}")
-    
-    # Check if complete
-    final_copied_count = len(already_copied) + stats["copied"]
-    if final_copied_count >= total_files - stats["failed"]:
-        # All done! Clear state
-        print(f"\n  {Colors.GREEN}✓ Smart copy complete!{Colors.RESET} All files copied.")
-        print(f"  {Colors.DIM}🗑️  State cleared.{Colors.RESET}")
-        state.mark_rule_complete(rule_id)
-    elif stats["failed"] > 0:
-        print(f"\n  {Colors.YELLOW}⚠ {stats['failed']} files failed.{Colors.RESET} Run again to retry.")
-    
-    # Summary
-    print(f"\n  {Colors.GREEN}✓ Copied:{Colors.RESET}   {stats['copied']} files (this run)")
-    if stats["resumed"] > 0:
-        print(f"  {Colors.CYAN}↻ Resumed:{Colors.RESET}  {stats['resumed']} files (previous runs)")
-    if stats["skipped"] > 0:
-        print(f"  {Colors.YELLOW}⊙ Exists:{Colors.RESET}   {stats['skipped']} files (already exist)")
-    if stats["failed"] > 0:
-        print(f"  {Colors.RED}✕ Failed:{Colors.RESET}   {stats['failed']} files")
-    
+            _record(stats, "copied", entry_rel, dest_display,
+                    "copied to the desktop but not deleted from the phone")
+
+    if listed_everything:
+        _cleanup_empty_dirs(source_uri, "", stats, verbose)
+    _print_pull_summary(stats, "Moved")
     return stats
 
 
-def run_smart_copy_rule(rule: Dict[str, Any], device: Dict[str, Any], verbose: bool = False, transfer_tracker=None, rename_duplicates: bool = True) -> Dict[str, int]:
+def _pull_directory(source_uri: str, dest_dir: Path, rel_path: str,
+                    stats: Dict[str, Any], verbose: bool, rename_duplicates: bool,
+                    transfer_tracker, verified: Optional[list] = None) -> bool:
+    """Walk one phone directory. ``verified`` is a move's delete queue: pass a
+    list to have size-verified files appended to it, None to only copy.
+
+    Returns False when any directory in the subtree could not be listed - a move
+    must not try to tidy up a tree it could not read.
+
+    ponytail: one `gio info` per entry (gio_list_detailed would be one call per
+    directory) - only `gio info` tells a failed lookup apart from a plain file,
+    and that difference is what stops an unreadable entry being skipped silently.
     """
-    Deprecated: Use run_backup_rule instead.
-    Execute a smart copy rule: resumable copy with progress tracking.
-    """
-    return run_backup_rule(rule, device, verbose, transfer_tracker, rename_duplicates=False)
+    entries = _listing(source_uri, rel_path or ".", stats)
+    if entries is None:
+        return False
 
+    complete = True
+    for name in entries:
+        entry_uri = gio_utils.child_uri(source_uri, name)
+        entry_rel = f"{rel_path}/{name}" if rel_path else name
 
-def _build_file_list(source_uri: str, rel_path: str, file_list: list) -> None:
-    """
-    Recursively build a list of all files in a directory.
-    
-    Args:
-        source_uri: URI of directory to scan
-        rel_path: Relative path from root (for tracking)
-        file_list: List to append file paths to
-    """
-    entries = gio_utils.gio_list(source_uri)
-    
-    for entry in entries:
-        entry_uri = f"{source_uri}/{entry}" if source_uri.endswith('/') else f"{source_uri}/{entry}"
-        entry_rel_path = f"{rel_path}/{entry}" if rel_path else entry
-        
-        # Get entry info
-        info = gio_utils.gio_info(entry_uri)
-        entry_type = info.get("standard::type", "")
-        
-        is_dir = (
-            "directory" in entry_type.lower() or
-            entry_type == "2" or
-            info.get("standard::is-directory", "").lower() == "true"
-        )
-        
-        if is_dir:
-            # Recurse into directory
-            _build_file_list(entry_uri, entry_rel_path, file_list)
-        elif "regular" in entry_type.lower() or entry_type == "1":
-            # Add file to list
-            file_list.append(entry_rel_path)
-
-
-def run_move_rule(rule: Dict[str, Any], device: Dict[str, Any], verbose: bool = False, transfer_tracker=None, rename_duplicates: bool = True) -> Dict[str, int]:
-    """
-    Execute a move rule: copy from phone to desktop, then delete from phone.
-
-    Args:
-        rule: Rule dictionary with phone_path, desktop_path
-        device: Device dictionary with activation_uri
-        verbose: Print verbose output
-        transfer_tracker: Optional TransferStats instance for tracking
-
-    Returns:
-        Dictionary with counts: copied, renamed, deleted, errors
-    """
-    activation_uri = device.get("activation_uri", "")
-    phone_path = rule.get("phone_path", "")
-    desktop_path_str = rule.get("desktop_path", "")
-
-    # Build URIs and paths
-    source_uri = paths.build_phone_uri(activation_uri, phone_path)
-    dest_dir = paths.expand_desktop(desktop_path_str)
-
-    print(f"\n{Colors.BOLD}{Colors.BRIGHT_BLUE}→{Colors.RESET} {Colors.BOLD}Move:{Colors.RESET} {Colors.CYAN}{phone_path}{Colors.RESET} {Colors.DIM}→{Colors.RESET} {Colors.GREEN}{shorten_path(dest_dir)}{Colors.RESET}\n")
-
-    # Create destination directory
-    paths.ensure_dir(dest_dir)
-
-    # Track statistics
-    stats = {"copied": 0, "renamed": 0, "deleted": 0, "errors": 0, "skipped": 0, "folders": 0}
-
-    # Files to delete after successful copy
-    files_to_delete = []
-
-    # Recursively process phone directory
-    _process_move_directory(source_uri, dest_dir, files_to_delete, stats, verbose, transfer_tracker=transfer_tracker, rename_duplicates=rename_duplicates)
-
-    # SAFETY: Delete files from phone ONLY after successful copy verification
-    # files_to_delete is populated only if:
-    # 1. In dry-run mode: gio_copy returned success (line 496)
-    # 2. In execute mode: dest_file.exists() AND dest_file.stat().st_size > 0 (line 500)
-    # This ensures files are NEVER deleted unless copy was verified successful.
-    if files_to_delete:
-        if verbose:
-            print(f"\n{Colors.DIM}Cleaning up phone:{Colors.RESET}")
-        for file_uri in files_to_delete:
-            if gio_utils.gio_remove(file_uri, verbose=verbose):
-                stats["deleted"] += 1
-            else:
-                stats["errors"] += 1
-                if verbose:
-                    print(f"  Warning: Failed to delete {file_uri}")
-
-    # Try to remove empty directories
-    _cleanup_empty_dirs(source_uri, verbose)
-
-    # Align based on longest label "Renamed:" (8 chars including emoji/symbol)
-    print(f"\n  {Colors.GREEN}✓ Copied:{Colors.RESET}   {stats['copied']} files")
-    if stats["folders"] > 0:
-        print(f" {Colors.BRIGHT_WHITE}📁 Folders:{Colors.RESET}  {stats['folders']}")
-    if stats["renamed"] > 0:
-        print(f"  {Colors.YELLOW}↻ Renamed:{Colors.RESET}  {stats['renamed']} (duplicates)")
-    if stats["skipped"] > 0:
-        print(f"  {Colors.CYAN}⊙ Exists:{Colors.RESET}   {stats['skipped']} files")
-    if stats["deleted"] > 0:
-        print(f" {Colors.RED}🗑️  Deleted:{Colors.RESET}  {stats['deleted']}")
-    if stats["errors"] > 0:
-        print(f"  {Colors.YELLOW}⨠ Errors:{Colors.RESET}   {stats['errors']}")
-
-    return stats
-
-
-def _process_move_directory(source_uri: str, dest_dir: Path, files_to_delete: list,
-                            stats: Dict[str, int], verbose: bool, in_subfolder: bool = False, transfer_tracker=None, rename_duplicates: bool = True) -> None:
-    """Recursively process a directory for move operation.
-
-    Args:
-        in_subfolder: True if we're inside a subfolder (to hide individual file output)
-        transfer_tracker: Optional TransferStats instance for tracking
-    """
-    # List entries in source directory
-    entries = gio_utils.gio_list(source_uri)
-
-    for entry in entries:
-        entry_uri = f"{source_uri}/{entry}" if source_uri.endswith('/') else f"{source_uri}/{entry}"
-
-        # Get entry info to determine if it's a file or directory
-        info = gio_utils.gio_info(entry_uri)
-        entry_type = info.get("standard::type", "")
-
-        # Check multiple indicators for directories
-        is_dir = (
-            "directory" in entry_type.lower() or
-            entry_type == "2" or
-            info.get("standard::is-directory", "").lower() == "true"
-        )
-
-        if is_dir:
-            # Create corresponding subdirectory on desktop
-            sub_dest_dir = dest_dir / entry
-            sub_dest_short = shorten_path(sub_dest_dir)
-            paths.ensure_dir(sub_dest_dir)
-            stats["folders"] += 1
-            print(f"  {Colors.BRIGHT_WHITE}📦{Colors.RESET} {Colors.BOLD}{entry}/{Colors.RESET} {Colors.DIM}→ {sub_dest_short}{Colors.RESET}")
-
-            # Recurse into subdirectory (track file count, mark as in_subfolder)
-            folder_stats_before = stats["copied"]
-            _process_move_directory(entry_uri, sub_dest_dir, files_to_delete, stats, verbose, in_subfolder=True, transfer_tracker=transfer_tracker, rename_duplicates=rename_duplicates)
-            files_in_folder = stats["copied"] - folder_stats_before
-            if files_in_folder > 0 and not verbose:
-                print(f"     {Colors.DIM}({files_in_folder} files){Colors.RESET}")
-
-        elif "regular" in entry_type.lower() or entry_type == "1":  # Type 1 is regular file
-            # Determine destination file path
-            dest_file = paths.next_available_name(dest_dir, entry, rename_duplicates=rename_duplicates)
-            
-            # Skip file if conflict and rename_duplicates is False
-            if dest_file is None:
-                stats["skipped"] += 1
-                if verbose:
-                    print(f"  {Colors.DIM}Skipped (exists):{Colors.RESET} {entry}")
-                continue
-
-            # Check if needs rename due to duplicate
-            will_rename = dest_file.name != entry
-            if will_rename:
-                stats["renamed"] += 1
-                # Show rename with full destination path (only if not in subfolder or verbose)
-                if (gio_utils.DRY_RUN or verbose) and not in_subfolder:
-                    dest_short = shorten_path(dest_file)
-                    print(f"  {Colors.YELLOW}↻{Colors.RESET} {Colors.DIM}{entry}{Colors.RESET} → {Colors.YELLOW}{dest_file.name}{Colors.RESET} {Colors.DIM}(duplicate → {dest_short}){Colors.RESET}")
-
-            # Get file size for transfer tracking
-            file_size = gio_utils.get_file_size(info)
-            
-            # Copy file - show root level files (not in subfolder), but not if already shown via rename
-            show_copy = (not will_rename and not in_subfolder) or verbose
-            if gio_utils.gio_copy(entry_uri, str(dest_file), recursive=False, verbose=show_copy):
-                # Verify copy succeeded (skip verification in dry-run mode)
-                if gio_utils.DRY_RUN:
-                    # In dry-run, just count it as successful
-                    stats["copied"] += 1
-                    files_to_delete.append(entry_uri)
-                    # Track transfer stats (use estimated size in dry-run)
-                    if transfer_tracker and file_size:
-                        transfer_tracker.add_file(file_size)
-                elif dest_file.exists() and dest_file.stat().st_size > 0:
-                    stats["copied"] += 1
-                    files_to_delete.append(entry_uri)
-                    # Track actual transferred bytes
-                    if transfer_tracker:
-                        actual_size = dest_file.stat().st_size
-                        transfer_tracker.add_file(actual_size)
-                else:
-                    stats["errors"] += 1
-                    if verbose:
-                        print(f"  Warning: Copy verification failed for {entry}")
-            else:
-                stats["errors"] += 1
-
-
-def _cleanup_empty_dirs(dir_uri: str, verbose: bool, skip_root: bool = True) -> None:
-    """Try to remove empty directories (best effort).
-
-    Args:
-        dir_uri: Directory URI to clean up
-        verbose: Print verbose output
-        skip_root: If True, don't delete the root directory itself (only subdirectories)
-    """
-    if skip_root:
-        # Only clean up subdirectories, not the root move directory
-        entries = gio_utils.gio_list(dir_uri)
-        for entry in entries:
-            entry_uri = f"{dir_uri}/{entry}" if dir_uri.endswith('/') else f"{dir_uri}/{entry}"
-            info = gio_utils.gio_info(entry_uri)
-            entry_type = info.get("standard::type", "")
-            is_dir = (
-                "directory" in entry_type.lower() or
-                entry_type == "2" or
-                info.get("standard::is-directory", "").lower() == "true"
-            )
-            if is_dir:
-                try:
-                    gio_utils.gio_remove(entry_uri, verbose=False)
-                except:
-                    pass  # Ignore errors - directory might not be empty
-    else:
         try:
-            gio_utils.gio_remove(dir_uri, verbose=False)
-        except:
-            pass  # Ignore errors - directory might not be empty
+            info = gio_utils.gio_info(entry_uri)
+        except GioError as err:
+            _fail(stats, entry_rel, err)
+            complete = False
+            continue
+
+        if gio_utils.is_dir(info):
+            sub_dest = dest_dir / name
+            stats["folders"] += 1
+            _record(stats, "folder", entry_rel, _display(sub_dest))
+            print(f"  {Colors.ACCENT}{Icons.FOLDER}{Colors.RESET} {Colors.BOLD}{name}/{Colors.RESET} "
+                  f"{Colors.DIM}{Icons.ARROW} {_display(sub_dest)}{Colors.RESET}")
+            _ensure_dir(sub_dest)
+            complete &= _pull_directory(entry_uri, sub_dest, entry_rel, stats, verbose,
+                                        rename_duplicates, transfer_tracker, verified)
+            continue
+
+        if not _is_regular(info):
+            _fail(stats, entry_rel, "not a file or a directory - gio could not read it")
+            continue
+
+        _pull_file(entry_uri, entry_rel, name, info, dest_dir, stats, verbose,
+                   rename_duplicates, transfer_tracker, verified)
+
+    return complete
 
 
-def run_sync_rule(rule: Dict[str, Any], device: Dict[str, Any], verbose: bool = False, transfer_tracker=None, rename_duplicates: bool = True) -> Dict[str, int]:
+def _pull_file(entry_uri: str, entry_rel: str, name: str, info: Dict[str, str],
+               dest_dir: Path, stats: Dict[str, Any], verbose: bool,
+               rename_duplicates: bool, transfer_tracker,
+               verified: Optional[list]) -> None:
+    dest_file = paths.next_available_name(dest_dir, name,
+                                          rename_duplicates=rename_duplicates)
+    if dest_file is None:
+        if rename_duplicates:
+            _fail(stats, entry_rel,
+                  f"no free name after {paths.MAX_DUPLICATES} attempts",
+                  _display(dest_dir / name))
+        else:
+            stats["skipped"] += 1
+            _record(stats, "skipped", entry_rel, _display(dest_dir / name),
+                    "already on the desktop, not copied")
+            if verbose:
+                print(f"  {Colors.SKIPPED}{Icons.SKIP}{Colors.RESET} "
+                      f"{Colors.DIM}{name} (already on the desktop){Colors.RESET}")
+        return
+
+    renamed = dest_file.name != name
+    source_size = gio_utils.get_file_size(info)
+    dest_display = _display(dest_file)
+
+    if not gio_utils.gio_copy(entry_uri, str(dest_file), verbose=verbose or not renamed):
+        _fail(stats, entry_rel, "copy failed", dest_display)
+        return
+
+    if gio_utils.DRY_RUN:
+        copied_size = source_size          # nothing was written, nothing to stat
+    elif not dest_file.exists():
+        _fail(stats, entry_rel, "gio reported success but nothing arrived", dest_display)
+        return
+    else:
+        copied_size = dest_file.stat().st_size
+        if source_size is not None and copied_size != source_size:
+            _fail(stats, entry_rel,
+                  f"size mismatch: {copied_size} of {source_size} bytes arrived",
+                  dest_display)
+            return
+
+    stats["copied"] += 1
+    if renamed:
+        stats["renamed"] += 1
+        print(f"  {Colors.RENAMED}{Icons.RENAME}{Colors.RESET} {Colors.DIM}{name}{Colors.RESET} "
+              f"{Icons.ARROW} {Colors.RENAMED}{dest_file.name}{Colors.RESET} "
+              f"{Colors.DIM}(duplicate){Colors.RESET}")
+    if transfer_tracker and copied_size:
+        transfer_tracker.add_file(copied_size)
+
+    action = "renamed" if renamed else ("moved" if verified is not None else "copied")
+    if verified is None:
+        _record(stats, action, entry_rel, dest_display)
+        return
+
+    if source_size is None and not gio_utils.DRY_RUN:
+        # Unverifiable: the desktop copy stands, but the original stays put.
+        stats["errors"] += 1
+        _record(stats, "copied", entry_rel, dest_display,
+                "source size unknown - original kept on the phone")
+        return
+
+    verified.append((entry_uri, entry_rel, dest_display, action))
+
+
+def _cleanup_empty_dirs(dir_uri: str, rel_path: str, stats: Dict[str, Any],
+                        verbose: bool) -> None:
+    """Remove subdirectories a move emptied. A directory is removed only when
+    its own listing comes back empty; a listing that fails aborts that subtree.
+    The rule root itself is never removed."""
+    entries = _listing(dir_uri, rel_path or ".", stats)
+    if entries is None:
+        return
+
+    for name in entries:
+        entry_uri = gio_utils.child_uri(dir_uri, name)
+        entry_rel = f"{rel_path}/{name}" if rel_path else name
+
+        try:
+            info = gio_utils.gio_info(entry_uri)
+        except GioError as err:
+            _fail(stats, entry_rel, err)
+            continue
+        if not gio_utils.is_dir(info):
+            continue
+
+        _cleanup_empty_dirs(entry_uri, entry_rel, stats, verbose)
+
+        remaining = _listing(entry_uri, entry_rel, stats)
+        if remaining is None or remaining:
+            continue
+        # ponytail: best effort - a directory the phone refuses to drop is not
+        # an error, the files are already safely off it.
+        if gio_utils.gio_remove(entry_uri, verbose=verbose):
+            stats["deleted"] += 1
+            _record(stats, "deleted", entry_rel)
+
+
+def _print_pull_summary(stats: Dict[str, Any], label: str) -> None:
+    print(f"\n  {Colors.SUCCESS}{Icons.OK} {label}:{Colors.RESET} {stats['copied']} files")
+    if stats["folders"]:
+        print(f"  {Colors.ACCENT}{Icons.FOLDER} Folders:{Colors.RESET} {stats['folders']}")
+    if stats["renamed"]:
+        print(f"  {Colors.RENAMED}{Icons.RENAME} Renamed:{Colors.RESET} "
+              f"{stats['renamed']} (duplicates)")
+    if stats["skipped"]:
+        print(f"  {Colors.SKIPPED}{Icons.SKIP} Skipped:{Colors.RESET} "
+              f"{stats['skipped']} (already on the desktop)")
+    if stats.get("deleted"):
+        print(f"  {Colors.DELETED}{Icons.DELETE} Deleted from phone:{Colors.RESET} "
+              f"{stats['deleted']}")
+    if stats["errors"]:
+        print(f"  {Colors.ERROR}{Icons.FAIL} Errors:{Colors.RESET} {stats['errors']}")
+
+
+# --- backup (resumable copy) -------------------------------------------------
+
+def run_backup_rule(rule: Dict[str, Any], device: Dict[str, Any], verbose: bool = False,
+                    transfer_tracker=None, rename_duplicates: bool = False,
+                    profile_name: str = "") -> Dict[str, Any]:
+    """Resumable phone -> desktop copy.
+
+    Progress is keyed ``"<profile>:<rule id>"`` and flushed in batches. State is
+    cleared only when nothing failed and every file is accounted for, so an
+    interrupted run always resumes instead of starting over.
     """
-    Execute a sync rule: mirror desktop to phone (desktop is source of truth).
+    stats = _new_stats("copied", "resumed", "skipped", "failed", "errors")
+    phone_path = rule.get("phone_path", "")
+    rule_id = rule.get("id", "unknown")
+    state_key = f"{profile_name}:{rule_id}"
 
-    Args:
-        rule: Rule dictionary with desktop_path, phone_path
-        device: Device dictionary with activation_uri
-        verbose: Print verbose output
-        transfer_tracker: Optional TransferStats instance for tracking
+    try:
+        source_uri, dest_dir = _endpoints(rule, device)
+    except ValueError as err:
+        _fail(stats, phone_path, err)
+        return stats
 
-    Returns:
-        Dictionary with counts: copied, deleted, errors
+    print(f"\n{Colors.BOLD}{Colors.BACKED_UP}{Icons.COPY} Backup:{Colors.RESET} "
+          f"{Colors.PATH}{phone_path}{Colors.RESET} {Colors.DIM}{Icons.ARROW}{Colors.RESET} "
+          f"{Colors.PATH}{_display(dest_dir)}{Colors.RESET}")
+
+    rule_state = state.load_rule_state(state_key)
+    copied_paths: Set[str] = rule_state["copied"]
+    failed_paths: Dict[str, str] = rule_state["failed"]
+    if copied_paths:
+        print(f"  {Colors.INFO}{Icons.INFO} Resuming:{Colors.RESET} "
+              f"{len(copied_paths)} files copied by an earlier run")
+
+    print(f"  {Colors.DIM}Scanning source directory...{Colors.RESET}")
+    all_files: List[Tuple[str, Optional[int], str]] = []
+    _scan_files(source_uri, "", all_files, stats)
+    total_files = len(all_files)
+    if not total_files:
+        print(f"  {Colors.WARNING}{Icons.WARN} No files found{Colors.RESET}")
+        return stats
+    print(f"  {Colors.DIM}Found:{Colors.RESET} {total_files} files\n")
+
+    _ensure_dir(dest_dir)
+
+    try:
+        for index, (rel_path, source_size, entry_uri) in enumerate(all_files, 1):
+            _backup_one(rel_path, source_size, entry_uri, dest_dir, stats,
+                        copied_paths, failed_paths, verbose, rename_duplicates,
+                        transfer_tracker, index, total_files)
+            if index % SAVE_EVERY == 0:
+                _save_progress(state_key, copied_paths, failed_paths, total_files)
+    except KeyboardInterrupt:
+        _save_progress(state_key, copied_paths, failed_paths, total_files)
+        print(f"\n\n  {Colors.WARNING}{Icons.WARN} Interrupted.{Colors.RESET} Progress saved.")
+        print(f"  {Colors.INFO}{Icons.INFO} Resume with:{Colors.RESET} "
+              f"{Colors.RULE_ID}phone-sync --run -r {rule_id} -y{Colors.RESET}\n")
+        raise
+
+    complete = (stats["failed"] == 0 and stats["errors"] == 0
+                and len(copied_paths) + stats["skipped"] >= total_files)
+    if complete:
+        print(f"\n  {Colors.SUCCESS}{Icons.OK} Backup complete.{Colors.RESET} "
+              f"{Colors.DIM}Resume state cleared.{Colors.RESET}")
+        if not gio_utils.DRY_RUN:
+            state.mark_rule_complete(state_key)
+    else:
+        _save_progress(state_key, copied_paths, failed_paths, total_files)
+        if stats["failed"]:
+            print(f"\n  {Colors.WARNING}{Icons.WARN} {stats['failed']} files failed.{Colors.RESET} "
+                  f"Run again to retry them.")
+
+    print(f"\n  {Colors.SUCCESS}{Icons.OK} Copied:{Colors.RESET} {stats['copied']} files (this run)")
+    if stats["resumed"]:
+        print(f"  {Colors.INFO}{Icons.INFO} Already backed up:{Colors.RESET} {stats['resumed']} files")
+    if stats["skipped"]:
+        print(f"  {Colors.SKIPPED}{Icons.SKIP} Skipped:{Colors.RESET} "
+              f"{stats['skipped']} files (conflict, not copied)")
+    if stats["failed"]:
+        print(f"  {Colors.ERROR}{Icons.FAIL} Failed:{Colors.RESET} {stats['failed']} files")
+    if stats["errors"]:
+        print(f"  {Colors.ERROR}{Icons.FAIL} Errors:{Colors.RESET} {stats['errors']}")
+
+    return stats
+
+
+def _backup_one(rel_path: str, source_size: Optional[int], entry_uri: str, dest_dir: Path,
+                stats: Dict[str, Any], copied_paths: Set[str], failed_paths: Dict[str, str],
+                verbose: bool, rename_duplicates: bool, transfer_tracker,
+                index: int, total_files: int) -> None:
+    dest_file = dest_dir / rel_path
+
+    # Already there and the same size? Nothing to do - this is what makes a
+    # resume cheap, and what stops a truncated file being skipped forever.
+    if (source_size is not None and dest_file.exists()
+            and dest_file.stat().st_size == source_size):
+        stats["resumed"] += 1
+        copied_paths.add(rel_path)
+        failed_paths.pop(rel_path, None)
+        _record(stats, "skipped", rel_path, _display(dest_file), "already backed up")
+        return
+
+    _ensure_dir(dest_file.parent)
+    if dest_file.exists() and rel_path in copied_paths:
+        # An earlier run of this rule wrote that file and it no longer matches
+        # the phone: overwrite it, it is our own leftover, not someone's file.
+        target = dest_file
+    else:
+        target = paths.next_available_name(dest_file.parent, dest_file.name,
+                                           rename_duplicates=rename_duplicates)
+    if target is None:
+        if rename_duplicates:
+            stats["failed"] += 1
+            failed_paths[rel_path] = f"no free name after {paths.MAX_DUPLICATES} attempts"
+            _record(stats, "failed", rel_path, _display(dest_file), failed_paths[rel_path])
+        else:
+            stats["skipped"] += 1
+            failed_paths[rel_path] = "conflict, not copied"
+            _record(stats, "skipped", rel_path, _display(dest_file), "conflict, not copied")
+        return
+
+    if verbose or index % 10 == 0:
+        percent = index / total_files * 100
+        print(f"  {Colors.DIM}[{index}/{total_files} - {percent:.1f}%]{Colors.RESET} {rel_path}")
+
+    if not gio_utils.gio_copy(entry_uri, str(target), verbose=verbose):
+        stats["failed"] += 1
+        failed_paths[rel_path] = "copy failed"
+        _record(stats, "failed", rel_path, _display(target), "copy failed")
+        return
+
+    if gio_utils.DRY_RUN:
+        copied_size = source_size
+    elif not target.exists():
+        stats["failed"] += 1
+        failed_paths[rel_path] = "gio reported success but nothing arrived"
+        _record(stats, "failed", rel_path, _display(target), failed_paths[rel_path])
+        return
+    else:
+        copied_size = target.stat().st_size
+        if source_size is not None and copied_size != source_size:
+            stats["failed"] += 1
+            failed_paths[rel_path] = (f"size mismatch: {copied_size} of "
+                                      f"{source_size} bytes arrived")
+            _record(stats, "failed", rel_path, _display(target), failed_paths[rel_path])
+            return
+
+    stats["copied"] += 1
+    copied_paths.add(rel_path)
+    failed_paths.pop(rel_path, None)
+    _record(stats, "copied", rel_path, _display(target))
+    if transfer_tracker and copied_size:
+        transfer_tracker.add_file(copied_size)
+
+
+def _save_progress(state_key: str, copied: Set[str], failed: Dict[str, str],
+                   total_files: int) -> None:
+    if not gio_utils.DRY_RUN:
+        state.save_rule_state(state_key, copied, failed, total_files)
+
+
+def _scan_files(source_uri: str, rel_path: str,
+               found: List[Tuple[str, Optional[int], str]], stats: Dict[str, Any]) -> None:
+    """Collect (relative path, size, URI) for every regular file, depth first."""
+    entries = _listing(source_uri, rel_path or ".", stats)
+    if entries is None:
+        return
+
+    for name in entries:
+        entry_uri = gio_utils.child_uri(source_uri, name)
+        entry_rel = f"{rel_path}/{name}" if rel_path else name
+
+        try:
+            info = gio_utils.gio_info(entry_uri)
+        except GioError as err:
+            _fail(stats, entry_rel, err)
+            continue
+
+        if gio_utils.is_dir(info):
+            _scan_files(entry_uri, entry_rel, found, stats)
+        elif _is_regular(info):
+            found.append((entry_rel, gio_utils.get_file_size(info), entry_uri))
+        else:
+            _fail(stats, entry_rel, "not a file or a directory - gio could not read it")
+
+
+# Legacy name, same function - the CLI and saved configs still say "smart copy".
+run_smart_copy_rule = run_backup_rule
+
+
+# --- sync (desktop is the source of truth) -----------------------------------
+
+def run_sync_rule(rule: Dict[str, Any], device: Dict[str, Any], verbose: bool = False,
+                  transfer_tracker=None) -> Dict[str, Any]:
+    """Mirror a desktop directory onto the phone.
+
+    Files are copied when the phone has no copy or a differently sized one.
+    Extraneous phone files are deleted only when the rule asks for it *and* the
+    desktop scan actually produced a complete file list - an empty or partial
+    scan means the phone keeps everything.
     """
-    activation_uri = device.get("activation_uri", "")
-    desktop_path_str = rule.get("desktop_path", "")
+    stats = _new_stats("copied", "skipped", "deleted", "errors")
     phone_path = rule.get("phone_path", "")
 
-    # Build paths and URIs
-    src_dir = paths.expand_desktop(desktop_path_str)
-    dest_uri = paths.build_phone_uri(activation_uri, phone_path)
+    try:
+        src_dir = paths.expand_desktop(rule.get("desktop_path", ""))
+    except ValueError as err:
+        _fail(stats, rule.get("desktop_path", ""), err)
+        return stats
 
-    print(f"\n{Colors.BOLD}{Colors.BRIGHT_CYAN}🔄 Sync:{Colors.RESET} {Colors.GREEN}{shorten_path(src_dir)}{Colors.RESET} → {Colors.CYAN}{phone_path}{Colors.RESET}")
+    dest_uri = paths.build_phone_uri(device.get("activation_uri", ""), phone_path)
+    print(f"\n{Colors.BOLD}{Colors.SYNCED}{Icons.SYNC} Sync:{Colors.RESET} "
+          f"{Colors.PATH}{_display(src_dir)}{Colors.RESET} "
+          f"{Colors.DIM}{Icons.ARROW}{Colors.RESET} {Colors.PATH}{phone_path}{Colors.RESET}")
 
-    if not src_dir.exists():
-        print(f"  Warning: Desktop source does not exist: {src_dir}")
-        return {"copied": 0, "deleted": 0, "errors": 1}
+    if not src_dir.is_dir():
+        _fail(stats, _display(src_dir),
+              "desktop source is not a directory - nothing to sync from")
+        return stats
 
-    # Ensure destination exists on phone
     gio_utils.gio_mkdir(dest_uri, parents=True)
 
-    # Track statistics
-    stats = {"copied": 0, "skipped": 0, "deleted": 0, "errors": 0}
+    expected_files: Set[str] = set()
+    expected_dirs: Set[str] = set()
+    complete = _sync_desktop_to_phone(src_dir, dest_uri, "", expected_files,
+                                      expected_dirs, stats, verbose, transfer_tracker)
 
-    # Track all files that should exist on phone
-    expected_phone_files: Set[str] = set()
+    if rule.get("delete_extraneous", False):
+        if not paths.normalize_phone_path(phone_path)[1]:
+            print(f"  {Colors.WARNING}{Icons.WARN} Rule targets the storage root - "
+                  f"refusing to delete anything on the phone{Colors.RESET}")
+        elif not expected_files:
+            print(f"  {Colors.WARNING}{Icons.WARN} Desktop side is empty - "
+                  f"refusing to delete anything on the phone{Colors.RESET}")
+        elif not complete:
+            print(f"  {Colors.WARNING}{Icons.WARN} Desktop scan was incomplete - "
+                  f"refusing to delete anything on the phone{Colors.RESET}")
+        else:
+            _delete_extraneous_on_phone(dest_uri, "", expected_files, expected_dirs,
+                                        stats, verbose)
 
-    # Copy/update files from desktop to phone
-    _sync_desktop_to_phone(src_dir, dest_uri, "", expected_phone_files, stats, verbose, transfer_tracker=transfer_tracker, rename_duplicates=rename_duplicates)
-
-    # Delete extraneous files on phone
-    if rule.get("delete_extraneous", True):
-        _delete_extraneous_on_phone(dest_uri, "", expected_phone_files, stats, verbose)
-
-    # Print summary with all relevant stats
-    summary_parts = []
-    if stats["copied"] > 0:
-        summary_parts.append(f"{Colors.GREEN}✓ Synced:{Colors.RESET} {stats['copied']}")
-    if stats["skipped"] > 0:
-        summary_parts.append(f"{Colors.CYAN}⊙ Skipped:{Colors.RESET} {stats['skipped']}")
-    if stats["deleted"] > 0:
-        summary_parts.append(f"{Colors.DIM}Cleaned:{Colors.RESET} {stats['deleted']}")
-    
-    if summary_parts:
-        print(f"  {', '.join(summary_parts)}")
-    else:
-        print(f"  {Colors.DIM}No changes{Colors.RESET}")
-    
-    if stats["errors"] > 0:
-        print(f"  {Colors.YELLOW}⚠ Errors:{Colors.RESET} {stats['errors']}")
+    parts = []
+    if stats["copied"]:
+        parts.append(f"{Colors.SUCCESS}{Icons.OK} Synced:{Colors.RESET} {stats['copied']}")
+    if stats["skipped"]:
+        parts.append(f"{Colors.SKIPPED}{Icons.SKIP} Unchanged:{Colors.RESET} {stats['skipped']}")
+    if stats["deleted"]:
+        parts.append(f"{Colors.DELETED}{Icons.DELETE} Removed:{Colors.RESET} {stats['deleted']}")
+    print(f"  {', '.join(parts)}" if parts else f"  {Colors.DIM}No changes{Colors.RESET}")
+    if stats["errors"]:
+        print(f"  {Colors.ERROR}{Icons.FAIL} Errors:{Colors.RESET} {stats['errors']}")
 
     return stats
 
 
 def _sync_desktop_to_phone(src_dir: Path, dest_uri: str, rel_path: str,
-                           expected_files: Set[str], stats: Dict[str, int], verbose: bool, transfer_tracker=None, rename_duplicates: bool = True, visited_inodes: Set[int] = None) -> None:
-    """Recursively sync desktop directory to phone (smart sync: skip unchanged files).
-    
-    Follows symlinks but guards against loops using visited inode set.
+                           expected_files: Set[str], expected_dirs: Set[str],
+                           stats: Dict[str, Any], verbose: bool,
+                           transfer_tracker, visited_inodes: Optional[Set[int]] = None) -> bool:
+    """Copy new and changed files onto the phone.
+
+    Returns False if any part of the desktop tree could not be read - the caller
+    must then not delete anything, because ``expected_files`` is incomplete.
+
+    Follows symlinks but guards against loops with a visited-inode set: a
+    symlinked directory that (directly or via a chain) points back at an
+    ancestor is not re-walked a second time.
     """
     if visited_inodes is None:
         visited_inodes = set()
-    
-    if not src_dir.is_dir():
-        return
-    
-    # Guard against symlink loops
+
     try:
         inode = os.stat(src_dir).st_ino
-        if inode in visited_inodes:
-            return  # Already visited this directory
-        visited_inodes.add(inode)
-    except OSError:
-        return
+    except OSError as err:
+        _fail(stats, _display(src_dir), err)
+        return False
+    if inode in visited_inodes:
+        return True  # already walked this directory via another path - not a failure
+    visited_inodes.add(inode)
 
-    for entry in src_dir.iterdir():
-        entry_rel_path = f"{rel_path}/{entry.name}" if rel_path else entry.name
+    try:
+        entries = sorted(src_dir.iterdir())
+    except OSError as err:
+        _fail(stats, _display(src_dir), err)
+        return False
 
-        # Check if it's a symlink - resolve it
-        is_symlink = entry.is_symlink()
-        if is_symlink:
+    complete = True
+    for entry in entries:
+        entry_rel = f"{rel_path}/{entry.name}" if rel_path else entry.name
+        sub_uri = gio_utils.child_uri(dest_uri, entry.name)
+
+        if entry.is_symlink():
             try:
-                # Resolve symlink to get the actual target
                 resolved = entry.resolve()
-                if not resolved.exists():
-                    continue  # Skip broken symlinks
+                broken = not resolved.exists()
             except (OSError, RuntimeError):
-                continue  # Skip broken symlinks
+                resolved, broken = entry, True
+            if broken:
+                # Nothing to copy, and its name never reaches expected_files -
+                # so the scan is incomplete and the phone's copy of that name
+                # (if any) must not be deleted for it.
+                _fail(stats, _display(entry),
+                      "broken symlink - skipped, so the phone keeps its copy",
+                      entry_rel)
+                complete = False
+                continue
         else:
             resolved = entry
 
         if resolved.is_dir():
-            # Create directory on phone
-            sub_dest_uri = f"{dest_uri}/{entry.name}"
-            gio_utils.gio_mkdir(sub_dest_uri, parents=True)
+            expected_dirs.add(unicodedata.normalize("NFC", entry_rel))
+            gio_utils.gio_mkdir(sub_uri, parents=True)
+            complete &= _sync_desktop_to_phone(resolved, sub_uri, entry_rel, expected_files,
+                                               expected_dirs, stats, verbose, transfer_tracker,
+                                               visited_inodes)
+            continue
+        if not resolved.is_file():
+            # A fifo, a socket: nothing to copy, and its name never reaches
+            # expected_files - so the scan is incomplete and the phone's copy
+            # of that name must not be deleted for it.
+            _fail(stats, _display(entry),
+                  "not a file or a directory - skipped, so the phone keeps its copy",
+                  entry_rel)
+            complete = False
+            continue
 
-            # Recurse (pass visited_inodes to track symlink loops)
-            _sync_desktop_to_phone(resolved, sub_dest_uri, entry_rel_path, expected_files, stats, verbose, transfer_tracker=transfer_tracker, rename_duplicates=rename_duplicates, visited_inodes=visited_inodes)
+        expected_files.add(unicodedata.normalize("NFC", entry_rel))
 
-        elif resolved.is_file():
-            # Track this file as expected
-            expected_files.add(entry_rel_path)
+        try:
+            dest_info = gio_utils.gio_info(sub_uri)
+        except GioError as err:
+            _fail(stats, _display(entry), err, entry_rel)
+            complete = False
+            continue
 
-            # Destination file URI on phone
-            dest_file_uri = f"{dest_uri}/{entry.name}"
-            
-            # Smart sync: check if file already exists with same size
-            dest_info = gio_utils.gio_info(dest_file_uri)
-            if dest_info:
-                # File exists on phone - compare sizes
-                dest_size = gio_utils.get_file_size(dest_info)
-                src_size = resolved.stat().st_size
-                
-                if dest_size is not None and dest_size == src_size:
-                    # File unchanged - skip copy
-                    stats["skipped"] += 1
-                    if verbose:
-                        print(f"  {Colors.CYAN}⊙{Colors.RESET} {Colors.DIM}{entry.name}{Colors.RESET} {Colors.DIM}(unchanged){Colors.RESET}")
-                    continue
-                
-            # File exists but size differs and rename_duplicates is False - skip it
-                if not rename_duplicates:
-                    stats["skipped"] += 1
-                    if verbose:
-                        print(f"  {Colors.DIM}Skipped (exists):{Colors.RESET} {entry.name}")
-                    continue
-            
-            # File is new or changed - copy it
-            if gio_utils.gio_copy(str(resolved), dest_file_uri, recursive=False, verbose=verbose):
-                stats["copied"] += 1
-                # Track transfer stats
-                if transfer_tracker:
-                    file_size = resolved.stat().st_size
-                    transfer_tracker.add_file(file_size)
-            else:
-                stats["errors"] += 1
+        try:
+            source_size = resolved.stat().st_size
+        except OSError as err:
+            # Raced: it was a file when iterdir saw it and is gone now.
+            _fail(stats, _display(entry), err, entry_rel)
+            complete = False
+            continue
+        if dest_info and gio_utils.get_file_size(dest_info) == source_size:
+            stats["skipped"] += 1
+            _record(stats, "skipped", _display(entry), entry_rel, "unchanged")
+            if verbose:
+                print(f"  {Colors.SKIPPED}{Icons.SKIP}{Colors.RESET} "
+                      f"{Colors.DIM}{entry.name} (unchanged){Colors.RESET}")
+            continue
+
+        # ponytail: no post-copy size check on the phone side - a short write
+        # differs in size and is re-copied next run, and nothing is deleted here.
+        if gio_utils.gio_copy(str(resolved), sub_uri, verbose=verbose):
+            stats["copied"] += 1
+            _record(stats, "synced", _display(entry), entry_rel)
+            if transfer_tracker:
+                transfer_tracker.add_file(source_size)
+        else:
+            _fail(stats, _display(entry), "copy to phone failed", entry_rel)
+
+    return complete
 
 
-def _delete_extraneous_on_phone(dest_uri: str, rel_path: str,
-                                expected_files: Set[str], stats: Dict[str, int], verbose: bool) -> None:
-    """Delete files on phone that don't exist on desktop."""
-    entries = gio_utils.gio_list(dest_uri)
+def _delete_extraneous_on_phone(dest_uri: str, rel_path: str, expected_files: Set[str],
+                                expected_dirs: Set[str], stats: Dict[str, Any],
+                                verbose: bool) -> None:
+    """Remove phone files the desktop no longer has.
 
-    for entry in entries:
-        entry_rel_path = f"{rel_path}/{entry}" if rel_path else entry
-        entry_uri = f"{dest_uri}/{entry}"
+    Names are compared NFC-normalized: the phone may hand back the decomposed
+    spelling of the same name, which would otherwise look extraneous every run.
+    """
+    entries = _listing(dest_uri, rel_path or ".", stats)
+    if entries is None:
+        return
 
-        # Get entry info
-        info = gio_utils.gio_info(entry_uri)
-        entry_type = info.get("standard::type", "")
+    for name in entries:
+        entry_uri = gio_utils.child_uri(dest_uri, name)
+        entry_rel = f"{rel_path}/{name}" if rel_path else name
+        key = unicodedata.normalize("NFC", entry_rel)
 
-        if "directory" in entry_type.lower():
-            # Recurse into directory
-            _delete_extraneous_on_phone(entry_uri, entry_rel_path, expected_files, stats, verbose)
+        try:
+            info = gio_utils.gio_info(entry_uri)
+        except GioError as err:
+            _fail(stats, entry_rel, err)
+            continue
 
-            # Try to remove directory if empty
-            if not gio_utils.gio_list(entry_uri):
-                if gio_utils.gio_remove(entry_uri, verbose=verbose):
-                    stats["deleted"] += 1
+        if gio_utils.is_dir(info):
+            _delete_extraneous_on_phone(entry_uri, entry_rel, expected_files,
+                                        expected_dirs, stats, verbose)
+            if key in expected_dirs:
+                continue
+            remaining = _listing(entry_uri, entry_rel, stats)
+            if remaining is None or remaining:
+                continue
+            if gio_utils.gio_remove(entry_uri, verbose=verbose):
+                stats["deleted"] += 1
+                _record(stats, "deleted", entry_rel)
+            continue
 
-        elif "regular" in entry_type.lower() or entry_type == "1":
-            # Check if file should exist
-            if entry_rel_path not in expected_files:
-                if gio_utils.gio_remove(entry_uri, verbose=verbose):
-                    stats["deleted"] += 1
-                else:
-                    stats["errors"] += 1
+        if not _is_regular(info):
+            _fail(stats, entry_rel, "not a file or a directory - gio could not read it")
+            continue
+
+        if key in expected_files:
+            continue
+        if gio_utils.gio_remove(entry_uri, verbose=verbose):
+            stats["deleted"] += 1
+            _record(stats, "deleted", entry_rel)
+        else:
+            _fail(stats, entry_rel, "delete failed")

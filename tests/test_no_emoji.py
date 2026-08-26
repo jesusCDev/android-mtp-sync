@@ -21,7 +21,6 @@ EXEMPT = {"phone_migration/theme.py"}
 
 # Not yet migrated off raw ANSI/emoji -- tracked in tasks/port-plan.md.
 NOT_YET_MIGRATED = {
-    "phone_migration/operations.py",     # Task 4
     "phone_migration/runner.py",         # Task 6
     "main.py",                           # Task 6
     "phone_migration/web_ui.py",         # Task 7

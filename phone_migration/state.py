@@ -116,28 +116,6 @@ def save_rule_state(state_key: str, copied: Set[str], failed: Dict[str, str],
         _write_state(state)
 
 
-def mark_file_copied(state_key: str, relative_path: str) -> None:
-    """Mark a single file as copied.
-
-    # ponytail: removed by Task 4 (operations.py still calls this per-file;
-    # Task 4 batches through save_rule_state every 25 files instead).
-    """
-    rule_state = load_rule_state(state_key)
-    rule_state["copied"].add(relative_path)
-    save_rule_state(state_key, rule_state["copied"], rule_state["failed"], rule_state["total_files"])
-
-
-def mark_file_failed(state_key: str, relative_path: str, error: str = "") -> None:
-    """Mark a single file as failed.
-
-    # ponytail: removed by Task 4 (operations.py still calls this per-file;
-    # Task 4 batches through save_rule_state every 25 files instead).
-    """
-    rule_state = load_rule_state(state_key)
-    rule_state["failed"][relative_path] = error
-    save_rule_state(state_key, rule_state["copied"], rule_state["failed"], rule_state["total_files"])
-
-
 def mark_rule_complete(state_key: str) -> None:
     """Mark a rule as completed by clearing its state."""
     with _acquire_lock():

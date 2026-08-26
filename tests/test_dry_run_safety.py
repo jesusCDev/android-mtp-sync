@@ -5,7 +5,8 @@ Tests all anomaly detection scenarios to ensure safety checks work correctly.
 """
 
 import pytest
-from phone_migration import dry_run_analyzer
+from fake_gio import FakePhone
+from phone_migration import dry_run_analyzer, operations
 
 
 def test_normal_move_operation():
@@ -210,6 +211,22 @@ def test_normal_sync_operation():
     
     assert result.is_safe
     assert not result.has_warnings  # Delete ratio is acceptable
+
+
+def test_analyzer_accepts_a_real_run_move_rule_stats_dict(tmp_path, monkeypatch):
+    """operations.py's new stats dict carries `files`/`folders`/etc. on top of
+    the keys the analyzer reads via `.get(...)` - a superset, not a rewrite.
+    Feed a real `run_move_rule` result through unmodified and confirm the
+    analyzer neither raises nor misreads it as unsafe."""
+    FakePhone({"Internal storage/DCIM/a.jpg": b"hello"}).install(monkeypatch)
+    rule = {"id": "r-0001", "mode": "move", "phone_path": "/DCIM",
+            "desktop_path": str(tmp_path / "dest")}
+
+    stats = operations.run_move_rule(rule, {"activation_uri": "mtp://dev/"})
+    result = dry_run_analyzer.analyze_dry_run_results([(rule, stats)])
+
+    assert result.is_safe
+    assert not result.has_warnings
 
 
 if __name__ == '__main__':

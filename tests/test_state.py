@@ -145,17 +145,6 @@ def test_get_remaining_files():
     assert state.get_remaining_files(["a", "b", "c"], {"b"}) == ["a", "c"]
 
 
-def test_mark_file_copied_and_failed_are_deprecated_thin_wrappers(state_file):
-    """Task 4 removes these; until then operations.py still calls them
-    per-file with the pre-state_key rule_id as the key."""
-    state.mark_file_copied("r-0001", "a.jpg")
-    state.mark_file_failed("r-0001", "b.jpg", "boom")
-
-    loaded = state.load_rule_state("r-0001")
-    assert loaded["copied"] == {"a.jpg"}
-    assert loaded["failed"] == {"b.jpg": "boom"}
-
-
 def test_concurrent_saves_to_different_keys_do_not_corrupt_state(state_file):
     """Two threads hammering save_rule_state on different keys must not lose
     updates, leave a .tmp file behind, or raise - the fcntl lock in

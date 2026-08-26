@@ -1,311 +1,670 @@
-"""
-Tests for phone migration operations (move, copy, sync, smart_copy).
-Uses temporary directories to simulate file operations without requiring MTP device.
+"""Tests for phone_migration.operations - the code that deletes files.
+
+The desktop side is a real ``tmp_path``; the phone side is an in-memory
+``FakePhone``. Assertions are on the bytes that ended up on disk, on the phone
+tree afterwards, and on the returned stats - never on mock call counts alone.
 """
 
-import unittest
-import tempfile
-import shutil
+import os
+import unicodedata
 from pathlib import Path
-from unittest.mock import Mock, patch, MagicMock
 
-# Add parent directory to path for imports
-import sys
-sys.path.insert(0, str(Path(__file__).parent.parent))
+import pytest
 
-from phone_migration import operations, paths
+from fake_gio import FakePhone
+from phone_migration import gio_utils, operations, state
+from phone_migration.transfer_stats import TransferStats
 
-
-class TestOperationsBase(unittest.TestCase):
-    """Base class for operations tests with common setup/teardown."""
-    
-    def setUp(self):
-        """Create temporary directories for testing."""
-        self.temp_dir = tempfile.mkdtemp()
-        self.source_dir = Path(self.temp_dir) / "source"
-        self.dest_dir = Path(self.temp_dir) / "dest"
-        self.source_dir.mkdir()
-        self.dest_dir.mkdir()
-    
-    def tearDown(self):
-        """Clean up temporary directories."""
-        shutil.rmtree(self.temp_dir, ignore_errors=True)
-    
-    def create_file(self, directory: Path, name: str, content: str = "") -> Path:
-        """Helper to create a test file."""
-        file_path = directory / name
-        file_path.parent.mkdir(parents=True, exist_ok=True)
-        file_path.write_text(content or name)  # Use filename as default content
-        return file_path
-    
-    def create_files(self, directory: Path, files: list) -> dict:
-        """Helper to create multiple test files. Returns dict of name -> Path."""
-        result = {}
-        for name in files:
-            result[name] = self.create_file(directory, name)
-        return result
+DEVICE = {"activation_uri": "mtp://dev/"}
+ROOT = "Internal storage/DCIM"
 
 
-class TestNextAvailableName(TestOperationsBase):
-    """Test the next_available_name function."""
-    
-    def test_no_conflict_returns_original_name(self):
-        """When file doesn't exist, return the original name."""
-        result = paths.next_available_name(self.dest_dir, "test.txt", rename_duplicates=True)
-        self.assertEqual(result.name, "test.txt")
-    
-    def test_conflict_with_rename_true_returns_renamed(self):
-        """When file exists and rename_duplicates=True, return renamed version."""
-        self.create_file(self.dest_dir, "test.txt")
-        result = paths.next_available_name(self.dest_dir, "test.txt", rename_duplicates=True)
-        self.assertEqual(result.name, "test (1).txt")
-    
-    def test_conflict_with_rename_false_returns_none(self):
-        """When file exists and rename_duplicates=False, return None."""
-        self.create_file(self.dest_dir, "test.txt")
-        result = paths.next_available_name(self.dest_dir, "test.txt", rename_duplicates=False)
-        self.assertIsNone(result)
-    
-    def test_multiple_conflicts_with_rename_true(self):
-        """When multiple files exist, find next available number."""
-        self.create_file(self.dest_dir, "test.txt")
-        self.create_file(self.dest_dir, "test (1).txt")
-        self.create_file(self.dest_dir, "test (2).txt")
-        result = paths.next_available_name(self.dest_dir, "test.txt", rename_duplicates=True)
-        self.assertEqual(result.name, "test (3).txt")
-    
-    def test_file_without_extension(self):
-        """Files without extensions should be handled correctly."""
-        self.create_file(self.dest_dir, "README")
-        result = paths.next_available_name(self.dest_dir, "README", rename_duplicates=True)
-        self.assertEqual(result.name, "README (1)")
+@pytest.fixture(autouse=True)
+def isolated(tmp_path, monkeypatch):
+    """No real state file, no DRY_RUN leaking between tests."""
+    monkeypatch.setattr(state, "STATE_DIR", tmp_path / "state")
+    monkeypatch.setattr(state, "STATE_FILE", tmp_path / "state" / "state.json")
+    monkeypatch.setattr(gio_utils, "DRY_RUN", False)
 
 
-class TestCopyOperation(TestOperationsBase):
-    """Test run_copy_rule operation."""
-    
-    @patch('phone_migration.gio_utils.gio_list')
-    @patch('phone_migration.gio_utils.gio_info')
-    @patch('phone_migration.gio_utils.gio_copy')
-    def test_copy_single_file(self, mock_copy, mock_info, mock_list):
-        """Test copying a single file."""
-        # Setup mocks
-        mock_list.return_value = ["photo.jpg"]
-        mock_info.return_value = {
-            "standard::type": "regular file",
-            "standard::size": "1024"
-        }
-        mock_copy.return_value = True
-        
-        # Create destination file to verify it was copied
-        dest_file = self.dest_dir / "photo.jpg"
-        dest_file.write_text("photo content")
-        
-        # Create mock rule and device
-        rule = {
-            "phone_path": "/DCIM/Camera",
-            "desktop_path": str(self.dest_dir)
-        }
-        device = {"activation_uri": "mtp://device/"}
-        
-        with patch('phone_migration.paths.build_phone_uri', return_value="mtp://device/DCIM/Camera"):
-            with patch('phone_migration.paths.expand_desktop', return_value=self.dest_dir):
-                stats = operations.run_copy_rule(rule, device, verbose=False)
-        
-        # Should have recorded stats
-        self.assertIsInstance(stats, dict)
-    
-    @patch('phone_migration.gio_utils.gio_list')
-    @patch('phone_migration.gio_utils.gio_info')
-    @patch('phone_migration.gio_utils.gio_copy')
-    def test_copy_with_rename_duplicates_false_skips_conflict(self, mock_copy, mock_info, mock_list):
-        """When rename_duplicates=False, conflicting files should be skipped."""
-        # Setup: file already exists in destination
-        existing_file = self.create_file(self.dest_dir, "photo.jpg", "existing content")
-        
-        # Setup mocks for source directory
-        mock_list.return_value = ["photo.jpg"]
-        mock_info.return_value = {
-            "standard::type": "regular file",
-            "standard::size": "2048"
-        }
-        
-        rule = {
-            "phone_path": "/DCIM/Camera",
-            "desktop_path": str(self.dest_dir)
-        }
-        device = {"activation_uri": "mtp://device/"}
-        
-        with patch('phone_migration.paths.build_phone_uri', return_value="mtp://device/DCIM/Camera"):
-            with patch('phone_migration.paths.expand_desktop', return_value=self.dest_dir):
-                with patch('phone_migration.operations.gio_utils.DRY_RUN', False):
-                    stats = operations.run_copy_rule(
-                        rule, device, verbose=False, rename_duplicates=False
-                    )
-        
-        # File should not be copied (counted as error/skipped)
-        # mock_copy should not have been called for the conflicting file
-        self.assertIsInstance(stats, dict)
+def make_phone(files, monkeypatch):
+    return FakePhone(files).install(monkeypatch)
 
 
-class TestMoveOperation(TestOperationsBase):
-    """Test run_move_rule operation."""
-    
-    @patch('phone_migration.gio_utils.gio_list')
-    @patch('phone_migration.gio_utils.gio_info')
-    @patch('phone_migration.gio_utils.gio_copy')
-    @patch('phone_migration.gio_utils.gio_remove')
-    def test_move_copies_then_deletes(self, mock_remove, mock_copy, mock_info, mock_list):
-        """Test that move copies files then deletes them."""
-        mock_list.return_value = ["photo.jpg"]
-        mock_info.return_value = {
-            "standard::type": "regular file",
-            "standard::size": "1024"
-        }
-        mock_copy.return_value = True
-        mock_remove.return_value = True
-        
-        rule = {
-            "phone_path": "/DCIM/Camera",
-            "desktop_path": str(self.dest_dir)
-        }
-        device = {"activation_uri": "mtp://device/"}
-        
-        with patch('phone_migration.paths.build_phone_uri', return_value="mtp://device/DCIM/Camera"):
-            with patch('phone_migration.paths.expand_desktop', return_value=self.dest_dir):
-                with patch('phone_migration.operations.gio_utils.DRY_RUN', False):
-                    with patch('phone_migration.operations._cleanup_empty_dirs'):
-                        stats = operations.run_move_rule(rule, device, verbose=False)
-        
-        self.assertIsInstance(stats, dict)
-        # Move should have both copied and deleted counts
-        self.assertIn("copied", stats)
-        self.assertIn("deleted", stats)
+def make_rule(tmp_path, mode="copy", phone_path="/DCIM", desktop=None, **extra):
+    return {"id": "r-0001", "mode": mode, "phone_path": phone_path,
+            "desktop_path": str(desktop if desktop is not None else tmp_path / "dest"),
+            **extra}
 
 
-class TestSyncOperation(TestOperationsBase):
-    """Test run_sync_rule operation."""
-    
-    def test_sync_copies_new_files_from_desktop_to_phone(self):
-        """Test syncing copies new files from desktop to phone."""
-        # Create files on desktop
-        self.create_file(self.source_dir, "file1.txt", "content1")
-        self.create_file(self.source_dir, "file2.txt", "content2")
-        
-        rule = {
-            "desktop_path": str(self.source_dir),
-            "phone_path": "/Videos/sync"
-        }
-        device = {"activation_uri": "mtp://device/"}
-        
-        with patch('phone_migration.paths.build_phone_uri', return_value="mtp://device/Videos/sync"):
-            with patch('phone_migration.paths.expand_desktop', return_value=self.source_dir):
-                with patch('phone_migration.gio_utils.gio_mkdir'):
-                    with patch('phone_migration.gio_utils.gio_info', return_value=None):
-                        with patch('phone_migration.gio_utils.gio_copy', return_value=True):
-                            with patch('phone_migration.operations._delete_extraneous_on_phone'):
-                                stats = operations.run_sync_rule(rule, device, verbose=False)
-        
-        # Should copy both files
-        self.assertIsInstance(stats, dict)
-        self.assertEqual(stats.get("copied", 0), 2)
-    
-    def test_sync_skips_unchanged_files(self):
-        """Test that sync skips files with same size (unchanged)."""
-        # Create file on desktop
-        test_file = self.create_file(self.source_dir, "video.mp4", "a" * 1024)
-        
-        rule = {
-            "desktop_path": str(self.source_dir),
-            "phone_path": "/Videos/sync"
-        }
-        device = {"activation_uri": "mtp://device/"}
-        
-        # Mock gio_info to return file exists with same size
-        def mock_info_func(uri):
-            return {"standard::size": "1024"}
-        
-        with patch('phone_migration.paths.build_phone_uri', return_value="mtp://device/Videos/sync"):
-            with patch('phone_migration.paths.expand_desktop', return_value=self.source_dir):
-                with patch('phone_migration.gio_utils.gio_mkdir'):
-                    with patch('phone_migration.gio_utils.gio_info', side_effect=mock_info_func):
-                        with patch('phone_migration.gio_utils.get_file_size', return_value=1024):
-                            with patch('phone_migration.gio_utils.gio_copy') as mock_copy:
-                                with patch('phone_migration.operations._delete_extraneous_on_phone'):
-                                    stats = operations.run_sync_rule(rule, device, verbose=False)
-        
-        # Should skip the file (not copy)
-        self.assertEqual(stats.get("skipped", 0), 1)
-        mock_copy.assert_not_called()
+def entries(stats, action):
+    return [f for f in stats["files"] if f["action"] == action]
 
 
-class TestSmartCopyOperation(TestOperationsBase):
-    """Test run_smart_copy_rule operation."""
-    
-    @patch('phone_migration.state.load_rule_state')
-    @patch('phone_migration.state.save_rule_state')
-    @patch('phone_migration.state.mark_file_copied')
-    @patch('phone_migration.operations._build_file_list')
-    @patch('phone_migration.gio_utils.gio_copy')
-    def test_smart_copy_tracks_progress(self, mock_copy, mock_build, mock_mark_copied, 
-                                        mock_save_state, mock_load_state):
-        """Test that smart_copy tracks which files have been copied."""
-        # Setup state to be empty (first run)
-        mock_load_state.return_value = {"copied": set(), "failed": {}, "total_files": 0}
-        mock_build.return_value = []  # Updated to just append to list
-        
-        # Mock _build_file_list to populate the file list
-        def build_files(uri, rel_path, file_list):
-            file_list.extend(["file1.txt", "file2.txt"])
-        
-        mock_build.side_effect = build_files
-        mock_copy.return_value = True
-        
-        # Create mock files
-        self.create_file(self.source_dir, "file1.txt")
-        self.create_file(self.source_dir, "file2.txt")
-        
-        rule = {
-            "id": "test-rule-1",
-            "phone_path": "/Videos/backup",
-            "desktop_path": str(self.source_dir)
-        }
-        device = {"activation_uri": "mtp://device/"}
-        
-        with patch('phone_migration.paths.build_phone_uri', return_value="mtp://device/Videos/backup"):
-            with patch('phone_migration.paths.expand_desktop', return_value=self.source_dir):
-                stats = operations.run_smart_copy_rule(rule, device, verbose=False)
-        
-        self.assertIsInstance(stats, dict)
+ACTIONS = {"copied", "moved", "synced", "deleted", "skipped", "renamed", "failed", "folder"}
 
 
-class TestRenameConflictHandling(TestOperationsBase):
-    """Test conflict handling with rename_duplicates parameter."""
-    
-    def test_move_with_conflicts_renamed_true(self):
-        """With rename_duplicates=True, conflicting files should be renamed."""
-        # Create source files
-        self.create_file(self.source_dir, "photo.jpg", "source content")
-        
-        # Create conflicting destination file
-        self.create_file(self.dest_dir, "photo.jpg", "dest content")
-        
-        # Direct test of the rename logic
-        result = paths.next_available_name(self.dest_dir, "photo.jpg", rename_duplicates=True)
-        self.assertEqual(result.name, "photo (1).jpg")
-    
-    def test_move_with_conflicts_renamed_false(self):
-        """With rename_duplicates=False, conflicting files should be skipped."""
-        # Create source files
-        self.create_file(self.source_dir, "photo.jpg", "source content")
-        
-        # Create conflicting destination file
-        self.create_file(self.dest_dir, "photo.jpg", "dest content")
-        
-        # Direct test of the skip logic
-        result = paths.next_available_name(self.dest_dir, "photo.jpg", rename_duplicates=False)
-        self.assertIsNone(result)
+def check_shape(stats):
+    for entry in stats["files"]:
+        assert set(entry) == {"action", "src", "dst", "error"}, entry
+        assert entry["action"] in ACTIONS, entry
+    return stats
 
 
-if __name__ == '__main__':
-    unittest.main()
+# --- copy --------------------------------------------------------------------
+
+def test_copy_single_file_lands_with_correct_bytes(tmp_path, monkeypatch):
+    make_phone({f"{ROOT}/a.jpg": b"hello"}, monkeypatch)
+
+    stats = check_shape(operations.run_copy_rule(make_rule(tmp_path), DEVICE))
+
+    assert (tmp_path / "dest" / "a.jpg").read_bytes() == b"hello"
+    assert stats["copied"] == 1
+    assert stats["errors"] == 0
+    assert entries(stats, "copied") == [
+        {"action": "copied", "src": "a.jpg",
+         "dst": str(tmp_path / "dest" / "a.jpg"), "error": None}]
+
+
+def test_copy_recurses_into_subdirectories(tmp_path, monkeypatch):
+    make_phone({f"{ROOT}/a.jpg": b"a", f"{ROOT}/sub/b.jpg": b"bb"}, monkeypatch)
+
+    stats = check_shape(operations.run_copy_rule(make_rule(tmp_path), DEVICE))
+
+    assert (tmp_path / "dest" / "sub" / "b.jpg").read_bytes() == b"bb"
+    assert stats["copied"] == 2
+    assert stats["folders"] == 1
+    assert entries(stats, "folder")[0]["src"] == "sub"
+    assert {e["src"] for e in entries(stats, "copied")} == {"a.jpg", "sub/b.jpg"}
+
+
+def test_copy_conflict_without_rename_skips_and_never_copies(tmp_path, monkeypatch):
+    phone = make_phone({f"{ROOT}/a.jpg": b"new"}, monkeypatch)
+    dest = tmp_path / "dest"
+    dest.mkdir()
+    (dest / "a.jpg").write_bytes(b"old")
+
+    stats = check_shape(operations.run_copy_rule(
+        make_rule(tmp_path), DEVICE, rename_duplicates=False))
+
+    assert (dest / "a.jpg").read_bytes() == b"old"
+    assert phone.copied == []
+    assert stats["skipped"] == 1
+    assert stats["copied"] == 0
+    assert entries(stats, "skipped")[0]["src"] == "a.jpg"
+
+
+def test_copy_conflict_with_rename_writes_a_numbered_copy(tmp_path, monkeypatch):
+    make_phone({f"{ROOT}/a.jpg": b"new"}, monkeypatch)
+    dest = tmp_path / "dest"
+    dest.mkdir()
+    (dest / "a.jpg").write_bytes(b"old")
+
+    stats = check_shape(operations.run_copy_rule(
+        make_rule(tmp_path), DEVICE, rename_duplicates=True))
+
+    assert (dest / "a.jpg").read_bytes() == b"old"
+    assert (dest / "a (1).jpg").read_bytes() == b"new"
+    assert stats["renamed"] == 1
+    assert stats["copied"] == 1
+    assert entries(stats, "renamed")[0]["dst"].endswith("a (1).jpg")
+
+
+def test_copy_counts_a_short_copy_as_an_error(tmp_path, monkeypatch):
+    phone = make_phone({f"{ROOT}/a.jpg": b"1234567890"}, monkeypatch)
+    phone.truncate.add("a.jpg")
+
+    stats = check_shape(operations.run_copy_rule(make_rule(tmp_path), DEVICE))
+
+    assert stats["copied"] == 0
+    assert stats["errors"] == 1
+    assert "size" in entries(stats, "failed")[0]["error"]
+
+
+def test_copy_reports_a_failed_copy(tmp_path, monkeypatch):
+    phone = make_phone({f"{ROOT}/a.jpg": b"x"}, monkeypatch)
+    phone.copy_failures.add("a.jpg")
+
+    stats = check_shape(operations.run_copy_rule(make_rule(tmp_path), DEVICE))
+
+    assert stats["copied"] == 0
+    assert stats["errors"] == 1
+    assert entries(stats, "failed")[0]["src"] == "a.jpg"
+
+
+def test_copy_tracks_transferred_bytes(tmp_path, monkeypatch):
+    make_phone({f"{ROOT}/a.jpg": b"12345"}, monkeypatch)
+    tracker = TransferStats()
+
+    operations.run_copy_rule(make_rule(tmp_path), DEVICE, transfer_tracker=tracker)
+
+    assert tracker.total_bytes == 5
+    assert tracker.files_processed == 1
+
+
+# --- move --------------------------------------------------------------------
+
+def test_move_deletes_the_original_after_a_size_verified_copy(tmp_path, monkeypatch):
+    phone = make_phone({f"{ROOT}/a.jpg": b"12345"}, monkeypatch)
+
+    stats = check_shape(operations.run_move_rule(make_rule(tmp_path, "move"), DEVICE))
+
+    assert (tmp_path / "dest" / "a.jpg").read_bytes() == b"12345"
+    assert phone.removed == [f"{ROOT}/a.jpg"]
+    assert f"{ROOT}/a.jpg" not in phone.files
+    assert stats["copied"] == 1
+    assert stats["deleted"] == 1
+    assert stats["errors"] == 0
+    assert entries(stats, "moved")[0]["src"] == "a.jpg"
+
+
+def test_move_keeps_the_original_when_the_copy_is_truncated(tmp_path, monkeypatch):
+    phone = make_phone({f"{ROOT}/a.jpg": b"1234567890"}, monkeypatch)
+    phone.truncate.add("a.jpg")
+
+    stats = check_shape(operations.run_move_rule(make_rule(tmp_path, "move"), DEVICE))
+
+    assert phone.removed == []
+    assert phone.files[f"{ROOT}/a.jpg"] == b"1234567890"
+    assert stats["deleted"] == 0
+    assert stats["copied"] == 0
+    assert stats["errors"] == 1
+    assert "size" in entries(stats, "failed")[0]["error"]
+
+
+def test_move_keeps_the_original_when_the_copy_fails(tmp_path, monkeypatch):
+    phone = make_phone({f"{ROOT}/a.jpg": b"x"}, monkeypatch)
+    phone.copy_failures.add("a.jpg")
+
+    stats = check_shape(operations.run_move_rule(make_rule(tmp_path, "move"), DEVICE))
+
+    assert phone.removed == []
+    assert phone.files[f"{ROOT}/a.jpg"] == b"x"
+    assert stats["errors"] == 1
+
+
+def test_move_verifies_and_deletes_a_zero_byte_file(tmp_path, monkeypatch):
+    phone = make_phone({f"{ROOT}/empty.txt": b""}, monkeypatch)
+
+    stats = check_shape(operations.run_move_rule(make_rule(tmp_path, "move"), DEVICE))
+
+    assert (tmp_path / "dest" / "empty.txt").read_bytes() == b""
+    assert phone.removed == [f"{ROOT}/empty.txt"]
+    assert stats["copied"] == 1
+    assert stats["deleted"] == 1
+    assert stats["errors"] == 0
+
+
+def test_move_removes_emptied_subdirectories_but_keeps_the_root(tmp_path, monkeypatch):
+    phone = make_phone({f"{ROOT}/sub/a.jpg": b"a", f"{ROOT}/other/b.jpg": b"b"},
+                       monkeypatch)
+    phone.copy_failures.add("b.jpg")
+
+    stats = check_shape(operations.run_move_rule(make_rule(tmp_path, "move"), DEVICE))
+
+    assert f"{ROOT}/sub" not in phone.dirs          # emptied, so removed
+    assert f"{ROOT}/other" in phone.dirs            # still holds the failed file
+    assert ROOT in phone.dirs                       # rule root is never removed
+    assert stats["errors"] == 1
+
+
+def test_move_never_deletes_when_a_listing_fails(tmp_path, monkeypatch):
+    phone = make_phone({f"{ROOT}/a.jpg": b"x"}, monkeypatch)
+    phone.list_errors.add(ROOT)
+
+    stats = check_shape(operations.run_move_rule(make_rule(tmp_path, "move"), DEVICE))
+
+    assert phone.removed == []
+    assert phone.files[f"{ROOT}/a.jpg"] == b"x"
+    assert stats["errors"] == 1
+    assert stats["copied"] == 0
+    assert "busy" in entries(stats, "failed")[0]["error"].lower()
+
+
+@pytest.mark.parametrize("name", [
+    "a b#c.jpg", "100%.jpg", "shot (1).jpg", "a#b%20c d.jpg", "note+&=?.txt",
+])
+def test_odd_names_round_trip_through_a_move(tmp_path, monkeypatch, name):
+    phone = make_phone({f"{ROOT}/{name}": b"xxxxxxx"}, monkeypatch)
+
+    stats = check_shape(operations.run_move_rule(make_rule(tmp_path, "move"), DEVICE))
+
+    assert (tmp_path / "dest" / name).read_bytes() == b"xxxxxxx"
+    assert phone.removed == [f"{ROOT}/{name}"]
+    assert stats["errors"] == 0
+
+
+# --- entries that are neither a directory nor a regular file -----------------
+
+@pytest.mark.parametrize("run", ["run_copy_rule", "run_move_rule"])
+def test_an_unreadable_entry_is_counted_never_silent(tmp_path, monkeypatch, run):
+    phone = make_phone({f"{ROOT}/a.jpg": b"x"}, monkeypatch)
+    phone.ghost(f"{ROOT}/mystery")
+
+    stats = check_shape(getattr(operations, run)(make_rule(tmp_path), DEVICE))
+
+    assert stats["errors"] == 1
+    assert entries(stats, "failed")[0]["src"] == "mystery"
+    assert stats["copied"] == 1
+
+
+# --- dry run -----------------------------------------------------------------
+
+def test_dry_run_copy_touches_nothing(tmp_path, monkeypatch):
+    phone = make_phone({f"{ROOT}/sub/a.jpg": b"x"}, monkeypatch)
+    monkeypatch.setattr(gio_utils, "DRY_RUN", True)
+
+    stats = check_shape(operations.run_copy_rule(make_rule(tmp_path), DEVICE))
+
+    assert not (tmp_path / "dest").exists()
+    assert phone.copied == []
+    assert stats["copied"] == 1
+    assert stats["folders"] == 1
+
+
+def test_dry_run_move_deletes_nothing(tmp_path, monkeypatch):
+    phone = make_phone({f"{ROOT}/a.jpg": b"x"}, monkeypatch)
+    monkeypatch.setattr(gio_utils, "DRY_RUN", True)
+
+    stats = check_shape(operations.run_move_rule(make_rule(tmp_path, "move"), DEVICE))
+
+    assert not (tmp_path / "dest").exists()
+    assert phone.removed == []
+    assert phone.files[f"{ROOT}/a.jpg"] == b"x"
+    assert stats["copied"] == 1
+    assert stats["deleted"] == 1      # preview of what a real run would delete
+
+
+def test_dry_run_backup_writes_no_state_file(tmp_path, monkeypatch):
+    make_phone({f"{ROOT}/a.jpg": b"x"}, monkeypatch)
+    monkeypatch.setattr(gio_utils, "DRY_RUN", True)
+
+    stats = check_shape(operations.run_backup_rule(
+        make_rule(tmp_path, "backup"), DEVICE, profile_name="work"))
+
+    assert not state.STATE_FILE.exists()
+    assert not (tmp_path / "dest").exists()
+    assert stats["copied"] == 1
+
+
+def test_dry_run_backup_does_not_clear_saved_progress(tmp_path, monkeypatch):
+    make_phone({f"{ROOT}/a.jpg": b"x"}, monkeypatch)
+    state.save_rule_state("work:r-0001", {"a.jpg"}, {}, 1)
+    monkeypatch.setattr(gio_utils, "DRY_RUN", True)
+
+    operations.run_backup_rule(make_rule(tmp_path, "backup"), DEVICE,
+                               profile_name="work")
+
+    assert state.has_resume_state("work:r-0001")
+
+
+def test_dry_run_sync_deletes_nothing(tmp_path, monkeypatch):
+    phone = make_phone({"Internal storage/Music/gone.mp3": b"a"}, monkeypatch)
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "keep.mp3").write_bytes(b"bb")
+    monkeypatch.setattr(gio_utils, "DRY_RUN", True)
+
+    stats = check_shape(operations.run_sync_rule(
+        {"id": "r-1", "mode": "sync", "phone_path": "/Music",
+         "desktop_path": str(src), "delete_extraneous": True}, DEVICE))
+
+    assert phone.removed == []
+    assert phone.files == {"Internal storage/Music/gone.mp3": b"a"}
+    assert stats["copied"] == 1
+    assert stats["deleted"] == 1      # preview only
+
+
+# --- backup ------------------------------------------------------------------
+
+def test_backup_copies_everything_and_clears_state_when_complete(tmp_path, monkeypatch):
+    make_phone({f"{ROOT}/a.jpg": b"x", f"{ROOT}/sub/b.jpg": b"yy"}, monkeypatch)
+
+    stats = check_shape(operations.run_backup_rule(
+        make_rule(tmp_path, "backup"), DEVICE, profile_name="work"))
+
+    assert (tmp_path / "dest" / "sub" / "b.jpg").read_bytes() == b"yy"
+    assert stats["copied"] == 2
+    assert stats["failed"] == 0
+    assert not state.has_resume_state("work:r-0001")
+
+
+def test_backup_state_is_keyed_by_profile_and_rule(tmp_path, monkeypatch):
+    phone = make_phone({f"{ROOT}/a.jpg": b"x", f"{ROOT}/b.jpg": b"y"}, monkeypatch)
+    phone.copy_failures.add("b.jpg")
+
+    operations.run_backup_rule(make_rule(tmp_path, "backup"), DEVICE,
+                               profile_name="work")
+
+    assert state.load_rule_state("work:r-0001")["copied"] == {"a.jpg"}
+    assert state.load_rule_state("home:r-0001")["copied"] == set()
+
+
+def test_backup_resume_skips_files_already_there_with_the_same_size(tmp_path, monkeypatch):
+    phone = make_phone({f"{ROOT}/a.jpg": b"12345", f"{ROOT}/b.jpg": b"67890"},
+                       monkeypatch)
+    dest = tmp_path / "dest"
+    dest.mkdir()
+    (dest / "a.jpg").write_bytes(b"12345")
+    state.save_rule_state("work:r-0001", {"a.jpg"}, {}, 2)
+
+    stats = check_shape(operations.run_backup_rule(
+        make_rule(tmp_path, "backup"), DEVICE, profile_name="work"))
+
+    assert phone.copied == [(f"{ROOT}/b.jpg", str(dest / "b.jpg"))]
+    assert stats["resumed"] == 1
+    assert stats["copied"] == 1
+    assert not state.has_resume_state("work:r-0001")
+
+
+def test_backup_recopies_a_file_whose_destination_is_truncated(tmp_path, monkeypatch):
+    make_phone({f"{ROOT}/a.jpg": b"12345"}, monkeypatch)
+    dest = tmp_path / "dest"
+    dest.mkdir()
+    (dest / "a.jpg").write_bytes(b"12")          # half-written by an aborted run
+    state.save_rule_state("work:r-0001", {"a.jpg"}, {}, 1)
+
+    stats = check_shape(operations.run_backup_rule(
+        make_rule(tmp_path, "backup"), DEVICE, profile_name="work"))
+
+    assert (dest / "a.jpg").read_bytes() == b"12345"
+    assert stats["copied"] == 1
+    assert stats["resumed"] == 0
+
+
+def test_backup_keeps_state_when_every_copy_fails(tmp_path, monkeypatch):
+    phone = make_phone({f"{ROOT}/a.jpg": b"x", f"{ROOT}/b.jpg": b"y"}, monkeypatch)
+    phone.copy_failures.update({"a.jpg", "b.jpg"})
+
+    stats = check_shape(operations.run_backup_rule(
+        make_rule(tmp_path, "backup"), DEVICE, profile_name="work"))
+
+    assert stats["failed"] == 2
+    assert stats["copied"] == 0
+    saved = state.load_rule_state("work:r-0001")
+    assert saved["copied"] == set()
+    assert set(saved["failed"]) == {"a.jpg", "b.jpg"}
+    assert saved["total_files"] == 2
+    assert state.has_resume_state("work:r-0001")
+
+
+def test_backup_counts_a_conflict_as_skipped_and_still_completes(tmp_path, monkeypatch, capsys):
+    phone = make_phone({f"{ROOT}/a.jpg": b"new", f"{ROOT}/b.jpg": b"y"}, monkeypatch)
+    dest = tmp_path / "dest"
+    dest.mkdir()
+    (dest / "a.jpg").write_bytes(b"different")
+
+    stats = check_shape(operations.run_backup_rule(
+        make_rule(tmp_path, "backup"), DEVICE, profile_name="work"))
+
+    assert (dest / "a.jpg").read_bytes() == b"different"
+    assert phone.copied == [(f"{ROOT}/b.jpg", str(dest / "b.jpg"))]
+    assert stats["skipped"] == 1
+    assert stats["copied"] == 1
+    assert "conflict" in capsys.readouterr().out
+    assert not state.has_resume_state("work:r-0001")
+
+
+def test_backup_keeps_state_when_a_listing_fails(tmp_path, monkeypatch):
+    phone = make_phone({f"{ROOT}/a.jpg": b"x", f"{ROOT}/sub/b.jpg": b"y"}, monkeypatch)
+    phone.list_errors.add(f"{ROOT}/sub")
+
+    stats = check_shape(operations.run_backup_rule(
+        make_rule(tmp_path, "backup"), DEVICE, profile_name="work"))
+
+    assert stats["errors"] == 1
+    assert stats["copied"] == 1
+    assert state.has_resume_state("work:r-0001")
+
+
+def test_backup_honours_rename_duplicates_when_asked(tmp_path, monkeypatch):
+    make_phone({f"{ROOT}/a.jpg": b"new"}, monkeypatch)
+    dest = tmp_path / "dest"
+    dest.mkdir()
+    (dest / "a.jpg").write_bytes(b"different")
+
+    stats = check_shape(operations.run_backup_rule(
+        make_rule(tmp_path, "backup"), DEVICE, rename_duplicates=True,
+        profile_name="work"))
+
+    assert (dest / "a (1).jpg").read_bytes() == b"new"
+    assert stats["copied"] == 1
+    assert stats["skipped"] == 0
+
+
+def test_smart_copy_is_the_backup_rule():
+    assert operations.run_smart_copy_rule is operations.run_backup_rule
+
+
+# --- sync --------------------------------------------------------------------
+
+def sync_rule(src, **extra):
+    return {"id": "r-1", "mode": "sync", "phone_path": "/Music",
+            "desktop_path": str(src), **extra}
+
+
+def test_sync_copies_new_and_size_changed_files(tmp_path, monkeypatch):
+    phone = make_phone({"Internal storage/Music/same.mp3": b"aaa",
+                        "Internal storage/Music/old.mp3": b"a"}, monkeypatch)
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "same.mp3").write_bytes(b"aaa")
+    (src / "old.mp3").write_bytes(b"abcd")
+    (src / "new.mp3").write_bytes(b"zz")
+
+    stats = check_shape(operations.run_sync_rule(sync_rule(src), DEVICE))
+
+    assert phone.files["Internal storage/Music/old.mp3"] == b"abcd"
+    assert phone.files["Internal storage/Music/new.mp3"] == b"zz"
+    assert stats["copied"] == 2
+    assert stats["skipped"] == 1
+    assert {e["dst"] for e in entries(stats, "synced")} == {"old.mp3", "new.mp3"}
+
+
+def test_sync_leaves_extraneous_files_alone_by_default(tmp_path, monkeypatch):
+    phone = make_phone({"Internal storage/Music/extra.mp3": b"a"}, monkeypatch)
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "keep.mp3").write_bytes(b"bb")
+
+    stats = check_shape(operations.run_sync_rule(sync_rule(src), DEVICE))
+
+    assert phone.files["Internal storage/Music/extra.mp3"] == b"a"
+    assert stats["deleted"] == 0
+
+
+def test_sync_deletes_extraneous_files_when_enabled(tmp_path, monkeypatch):
+    phone = make_phone({"Internal storage/Music/extra.mp3": b"a"}, monkeypatch)
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "keep.mp3").write_bytes(b"bb")
+
+    stats = check_shape(operations.run_sync_rule(
+        sync_rule(src, delete_extraneous=True), DEVICE))
+
+    assert "Internal storage/Music/extra.mp3" not in phone.files
+    assert phone.files["Internal storage/Music/keep.mp3"] == b"bb"
+    assert stats["deleted"] == 1
+    assert entries(stats, "deleted")[0]["src"] == "extra.mp3"
+
+
+def test_sync_refuses_to_delete_when_the_desktop_side_is_empty(tmp_path, monkeypatch, capsys):
+    phone = make_phone({"Internal storage/Music/a.mp3": b"a",
+                        "Internal storage/Music/b.mp3": b"b"}, monkeypatch)
+    src = tmp_path / "src"
+    src.mkdir()
+
+    stats = check_shape(operations.run_sync_rule(
+        sync_rule(src, delete_extraneous=True), DEVICE))
+
+    assert phone.removed == []
+    assert len(phone.files) == 2
+    assert stats["deleted"] == 0
+    assert "refus" in capsys.readouterr().out.lower()
+
+
+def test_sync_refuses_when_the_desktop_path_is_a_file(tmp_path, monkeypatch):
+    phone = make_phone({"Internal storage/Music/keep.mp3": b"a"}, monkeypatch)
+    src = tmp_path / "src.txt"
+    src.write_text("not a directory")
+
+    stats = check_shape(operations.run_sync_rule(
+        sync_rule(src, delete_extraneous=True), DEVICE))
+
+    assert phone.removed == []
+    assert phone.files["Internal storage/Music/keep.mp3"] == b"a"
+    assert stats["errors"] == 1
+    assert stats["deleted"] == 0
+
+
+def test_sync_refuses_when_the_desktop_path_is_missing(tmp_path, monkeypatch):
+    phone = make_phone({"Internal storage/Music/keep.mp3": b"a"}, monkeypatch)
+
+    stats = check_shape(operations.run_sync_rule(
+        sync_rule(tmp_path / "gone", delete_extraneous=True), DEVICE))
+
+    assert phone.removed == []
+    assert stats["errors"] == 1
+
+
+def test_sync_recurses_into_phone_subdirectories(tmp_path, monkeypatch):
+    phone = make_phone({"Internal storage/Music/sub/gone.mp3": b"a",
+                        "Internal storage/Music/sub/keep.mp3": b"bb"}, monkeypatch)
+    src = tmp_path / "src"
+    (src / "sub").mkdir(parents=True)
+    (src / "sub" / "keep.mp3").write_bytes(b"bb")
+
+    stats = check_shape(operations.run_sync_rule(
+        sync_rule(src, delete_extraneous=True), DEVICE))
+
+    assert "Internal storage/Music/sub/gone.mp3" not in phone.files
+    assert phone.files["Internal storage/Music/sub/keep.mp3"] == b"bb"
+    assert "Internal storage/Music/sub" in phone.dirs   # still wanted by the desktop
+    assert stats["deleted"] == 1
+
+
+def test_sync_compares_names_after_unicode_normalization(tmp_path, monkeypatch):
+    # Same name, different encodings: NFD on the phone, NFC on the desktop.
+    phone = make_phone({"Internal storage/Music/café.mp3": b"aa"}, monkeypatch)
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "café.mp3").write_bytes(b"aa")
+
+    stats = check_shape(operations.run_sync_rule(
+        sync_rule(src, delete_extraneous=True), DEVICE))
+
+    assert phone.removed == []
+    assert stats["deleted"] == 0
+
+
+def test_sync_counts_a_listing_failure_instead_of_deleting(tmp_path, monkeypatch):
+    phone = make_phone({"Internal storage/Music/extra.mp3": b"a"}, monkeypatch)
+    phone.list_errors.add("Internal storage/Music")
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "keep.mp3").write_bytes(b"bb")
+
+    stats = check_shape(operations.run_sync_rule(
+        sync_rule(src, delete_extraneous=True), DEVICE))
+
+    assert phone.removed == []
+    assert stats["errors"] == 1
+    assert stats["deleted"] == 0
+
+
+def test_sync_reports_a_failed_copy(tmp_path, monkeypatch):
+    phone = make_phone({}, monkeypatch)
+    phone.copy_failures.add("keep.mp3")
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "keep.mp3").write_bytes(b"bb")
+
+    stats = check_shape(operations.run_sync_rule(sync_rule(src), DEVICE))
+
+    assert stats["errors"] == 1
+    assert stats["copied"] == 0
+    assert entries(stats, "failed")[0]["dst"] == "keep.mp3"
+
+
+# --- an empty desktop_path aborts the rule, it never targets the CWD ---------
+
+@pytest.mark.parametrize("run", ["run_copy_rule", "run_move_rule",
+                                 "run_backup_rule", "run_sync_rule"])
+def test_an_empty_desktop_path_is_an_error_not_a_crash(monkeypatch, run):
+    phone = make_phone({f"{ROOT}/a.jpg": b"x"}, monkeypatch)
+
+    stats = check_shape(getattr(operations, run)(
+        {"id": "r-0001", "phone_path": "/DCIM", "desktop_path": ""}, DEVICE))
+
+    assert stats["errors"] == 1
+    assert phone.removed == []
+    assert phone.copied == []
+    assert entries(stats, "failed")[0]["error"]
+
+
+# --- sync never deletes on the strength of an incomplete desktop scan --------
+
+def test_sync_does_not_treat_an_unreadable_desktop_entry_as_extraneous(tmp_path, monkeypatch):
+    """A dangling symlink is not a file, so its name never reaches expected_files -
+    the phone's copy of that name must still not be deleted."""
+    phone = make_phone({"Internal storage/Music/ghost.jpg": b"a",
+                        "Internal storage/Music/keep.mp3": b"bb"}, monkeypatch)
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "keep.mp3").write_bytes(b"bb")
+    os.symlink("/nonexistent", src / "ghost.jpg")
+
+    stats = check_shape(operations.run_sync_rule(
+        sync_rule(src, delete_extraneous=True), DEVICE))
+
+    assert phone.files["Internal storage/Music/ghost.jpg"] == b"a"
+    assert phone.removed == []
+    assert stats["errors"] == 1
+    assert stats["deleted"] == 0
+
+
+@pytest.mark.parametrize("phone_path", ["/", "", "~/is"])
+def test_sync_refuses_to_delete_at_the_storage_root(tmp_path, monkeypatch, phone_path, capsys):
+    phone = make_phone({"Internal storage/DCIM/holiday.jpg": b"a"}, monkeypatch)
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "keep.mp3").write_bytes(b"bb")
+
+    stats = check_shape(operations.run_sync_rule(
+        {"id": "r-1", "mode": "sync", "phone_path": phone_path,
+         "desktop_path": str(src), "delete_extraneous": True}, DEVICE))
+
+    assert phone.files["Internal storage/DCIM/holiday.jpg"] == b"a"
+    assert phone.removed == []
+    assert stats["deleted"] == 0
+    assert "refus" in capsys.readouterr().out.lower()
+
+
+def test_sync_survives_a_file_that_vanishes_between_listing_and_stat(tmp_path, monkeypatch):
+    """The classic race: the entry is a file when iterdir sees it and gone by the
+    time its size is read. The rule reports an error, it does not raise."""
+    phone = make_phone({"Internal storage/Music/extra.mp3": b"a"}, monkeypatch)
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "keep.mp3").write_bytes(b"bb")
+
+    real_stat, real_is_file = Path.stat, Path.is_file
+
+    def vanished_stat(self, **kwargs):
+        if self.name == "keep.mp3":
+            raise OSError(2, "No such file or directory")
+        return real_stat(self, **kwargs)
+
+    def still_looks_like_a_file(self):
+        return True if self.name == "keep.mp3" else real_is_file(self)
+
+    monkeypatch.setattr(Path, "stat", vanished_stat)
+    monkeypatch.setattr(Path, "is_file", still_looks_like_a_file)
+
+    stats = check_shape(operations.run_sync_rule(
+        sync_rule(src, delete_extraneous=True), DEVICE))
+
+    assert phone.files["Internal storage/Music/extra.mp3"] == b"a"
+    assert phone.removed == []
+    assert stats["errors"] == 1
+    assert stats["deleted"] == 0
