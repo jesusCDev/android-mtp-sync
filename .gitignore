@@ -50,3 +50,6 @@ config.json
 tests/videos/*.mp4
 tests/videos/*.mkv
 tests/videos/*.avi
+
+# Test media never belongs in git
+tests/videos/
