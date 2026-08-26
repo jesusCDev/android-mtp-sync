@@ -212,23 +212,23 @@ def format_analysis_results(result: AnalysisResult) -> str:
     Returns:
         Formatted string ready for print()
     """
-    from .operations import Colors
-    
+    from .theme import Colors, Icons
+
     output = []
-    
+
     if result.blockers:
-        output.append(f"\n{Colors.RED}{Colors.BOLD}❌ BLOCKERS FOUND - Operation will be aborted:{Colors.RESET}")
+        output.append(f"\n{Colors.ERROR}{Colors.BOLD}{Icons.FAIL} BLOCKERS FOUND - Operation will be aborted:{Colors.RESET}")
         for issue in result.blockers:
-            output.append(f"  {Colors.RED}[{issue.rule_id}] {issue.message}{Colors.RESET}")
-    
+            output.append(f"  {Colors.ERROR}[{issue.rule_id}] {issue.message}{Colors.RESET}")
+
     if result.warnings:
-        output.append(f"\n{Colors.YELLOW}{Colors.BOLD}⚠️  WARNINGS:{Colors.RESET}")
+        output.append(f"\n{Colors.WARNING}{Colors.BOLD}{Icons.WARN} WARNINGS:{Colors.RESET}")
         for issue in result.warnings:
-            output.append(f"  {Colors.YELLOW}[{issue.rule_id}] {issue.message}{Colors.RESET}")
-    
+            output.append(f"  {Colors.WARNING}[{issue.rule_id}] {issue.message}{Colors.RESET}")
+
     if result.info:
-        output.append(f"\n{Colors.CYAN}{Colors.BOLD}ℹ️  INFO:{Colors.RESET}")
+        output.append(f"\n{Colors.INFO}{Colors.BOLD}{Icons.INFO} INFO:{Colors.RESET}")
         for issue in result.info:
-            output.append(f"  {Colors.CYAN}[{issue.rule_id}] {issue.message}{Colors.RESET}")
-    
+            output.append(f"  {Colors.INFO}[{issue.rule_id}] {issue.message}{Colors.RESET}")
+
     return "\n".join(output)

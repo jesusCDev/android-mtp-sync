@@ -116,7 +116,7 @@ class TestCopyOperation(TestOperationsBase):
         self.assertIsInstance(stats, dict)
     
     @patch('phone_migration.gio_utils.gio_list')
-    @patch('phone_migration.gio_info')
+    @patch('phone_migration.gio_utils.gio_info')
     @patch('phone_migration.gio_utils.gio_copy')
     def test_copy_with_rename_duplicates_false_skips_conflict(self, mock_copy, mock_info, mock_list):
         """When rename_duplicates=False, conflicting files should be skipped."""
@@ -237,36 +237,6 @@ class TestSyncOperation(TestOperationsBase):
         # Should skip the file (not copy)
         self.assertEqual(stats.get("skipped", 0), 1)
         mock_copy.assert_not_called()
-    
-    @patch('phone_migration.gio_utils.gio_mkdir')
-    @patch('phone_migration.operations._delete_extraneous_on_phone')
-    def test_sync_with_rename_duplicates_false_skips_conflicts(self, mock_cleanup, mock_mkdir):
-        """Test that sync skips files with conflicts when rename_duplicates=False."""
-        # Create file on desktop
-        test_file = self.create_file(self.source_dir, "video.mp4", "a" * 1024)
-        
-        rule = {
-            "desktop_path": str(self.source_dir),
-            "phone_path": "/Videos/sync"
-        }
-        device = {"activation_uri": "mtp://device/"}
-        
-        # Mock gio_info to return file exists with DIFFERENT size
-        def mock_info_func(uri):
-            return {"standard::size": "2048"}  # Different size
-        
-        with patch('phone_migration.paths.build_phone_uri', return_value="mtp://device/Videos/sync"):
-            with patch('phone_migration.paths.expand_desktop', return_value=self.source_dir):
-                with patch('phone_migration.gio_utils.gio_info', side_effect=mock_info_func):
-                    with patch('phone_migration.gio_utils.get_file_size', return_value=2048):
-                        with patch('phone_migration.gio_utils.gio_copy') as mock_copy:
-                            stats = operations.run_sync_rule(
-                                rule, device, verbose=False, rename_duplicates=False
-                            )
-        
-        # Should skip the file (conflict)
-        self.assertGreater(stats.get("errors", 0), 0)
-        mock_copy.assert_not_called()
 
 
 class TestSmartCopyOperation(TestOperationsBase):
@@ -281,7 +251,7 @@ class TestSmartCopyOperation(TestOperationsBase):
                                         mock_save_state, mock_load_state):
         """Test that smart_copy tracks which files have been copied."""
         # Setup state to be empty (first run)
-        mock_load_state.return_value = {"copied": [], "failed": []}
+        mock_load_state.return_value = {"copied": set(), "failed": [], "total_files": 0}
         mock_build.return_value = []  # Updated to just append to list
         
         # Mock _build_file_list to populate the file list

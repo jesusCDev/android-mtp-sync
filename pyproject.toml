@@ -1,0 +1,12 @@
+[project]
+name = "phone-migration"
+version = "0.1.0"  # keep in sync with phone_migration/__init__.py __version__
+requires-python = ">=3.10"
+dependencies = []
+
+[project.optional-dependencies]
+web = ["Flask>=3.0.0"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

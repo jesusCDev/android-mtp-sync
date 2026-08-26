@@ -7,15 +7,19 @@ import time
 import threading
 from typing import Optional
 
+from .theme import Colors, Icons
+
+SPINNER_FRAMES = ['|', '/', '-', '\\']
+
 
 class Spinner:
     """Animated spinner for long-running operations."""
-    
-    def __init__(self, message: str = "Processing", color: str = '\033[96m'):
+
+    def __init__(self, message: str = "Processing", color: str = Colors.INFO):
         self.message = message
         self.color = color
-        self.reset = '\033[0m'
-        self.frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
+        self.reset = Colors.RESET
+        self.frames = SPINNER_FRAMES
         self.running = False
         self.thread: Optional[threading.Thread] = None
         self.frame_idx = 0
@@ -50,11 +54,11 @@ class Spinner:
         sys.stdout.flush()
 
 
-def print_progress_bar(current: int, total: int, prefix: str = '', suffix: str = '', 
-                       length: int = 40, fill: str = '█', color: str = '\033[92m'):
+def print_progress_bar(current: int, total: int, prefix: str = '', suffix: str = '',
+                       length: int = 40, fill: str = '█', color: str = Colors.SUCCESS):
     """
     Print a colored progress bar.
-    
+
     Args:
         current: Current progress value
         total: Total value
@@ -62,9 +66,9 @@ def print_progress_bar(current: int, total: int, prefix: str = '', suffix: str =
         suffix: Text after the bar
         length: Character length of bar
         fill: Bar fill character
-        color: ANSI color code
+        color: ANSI color code (see phone_migration.theme.Colors)
     """
-    reset = '\033[0m'
+    reset = Colors.RESET
     percent = f"{100 * (current / float(total)):.1f}" if total > 0 else "0.0"
     filled_length = int(length * current // total) if total > 0 else 0
     bar = fill * filled_length + '░' * (length - filled_length)
@@ -106,7 +110,7 @@ class RuleProgress:
     def start(self):
         """Start the rule progress."""
         msg = f"[{self.current_rule}/{self.total_rules}] {self.mode.upper()} ({self.rule_id})"
-        self.spinner = Spinner(msg, color='\033[96m')  # Bright cyan
+        self.spinner = Spinner(msg, color=Colors.INFO)
         self.spinner.start()
     
     def update(self, message: str):
@@ -138,13 +142,13 @@ class RuleProgress:
             time_str = format_time_estimate(elapsed)
             
             if success:
-                icon = '✅'
-                color = '\033[92m'  # Bright green
+                icon = Icons.OK
+                color = Colors.SUCCESS
             else:
-                icon = '❌'
-                color = '\033[91m'  # Bright red
-            
-            final = f"{color}{icon} [{self.current_rule}/{self.total_rules}] {self.mode.upper()} - {summary} ({time_str})\033[0m"
+                icon = Icons.FAIL
+                color = Colors.ERROR
+
+            final = f"{color}{icon} [{self.current_rule}/{self.total_rules}] {self.mode.upper()} - {summary} ({time_str}){Colors.RESET}"
             self.spinner.stop(final)
 
 
@@ -173,5 +177,5 @@ class OperationProgress:
             self.total_rules,
             prefix='Overall Progress:',
             suffix=eta,
-            color='\033[94m'  # Bright blue
+            color=Colors.ACCENT
         )

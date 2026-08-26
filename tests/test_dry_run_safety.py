@@ -87,7 +87,7 @@ def test_mass_deletion_warning():
     # Should be safe (move is correct) but with warning for large operation
     assert result.is_safe
     assert result.has_warnings
-    assert any('1000 files will be deleted' in w.message for w in result.warnings)
+    assert any('1000 files will be removed from phone' in w.message for w in result.warnings)
 
 
 def test_large_delete_warning():
