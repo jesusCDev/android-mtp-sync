@@ -142,7 +142,7 @@ def _process_copy_directory(source_uri: str, dest_dir: Path,
             
             # Copy file - show root level files (not in subfolder), but not if already shown via rename
             show_copy = (not will_rename and not in_subfolder) or verbose
-            if gio_utils.gio_copy(entry_uri, str(dest_file), recursive=False, overwrite=False, verbose=show_copy):
+            if gio_utils.gio_copy(entry_uri, str(dest_file), recursive=False, verbose=show_copy):
                 # Verify copy succeeded (skip verification in dry-run mode)
                 if gio_utils.DRY_RUN:
                     # In dry-run, just count it as successful
@@ -265,7 +265,7 @@ def run_backup_rule(rule: Dict[str, Any], device: Dict[str, Any], verbose: bool 
         
         # Try to copy the file
         try:
-            if gio_utils.gio_copy(current_uri, str(dest_file), recursive=False, overwrite=False, verbose=False):
+            if gio_utils.gio_copy(current_uri, str(dest_file), recursive=False, verbose=False):
                 # Verify copy
                 if gio_utils.DRY_RUN or (dest_file.exists() and dest_file.stat().st_size > 0):
                     stats["copied"] += 1
@@ -491,7 +491,7 @@ def _process_move_directory(source_uri: str, dest_dir: Path, files_to_delete: li
             
             # Copy file - show root level files (not in subfolder), but not if already shown via rename
             show_copy = (not will_rename and not in_subfolder) or verbose
-            if gio_utils.gio_copy(entry_uri, str(dest_file), recursive=False, overwrite=False, verbose=show_copy):
+            if gio_utils.gio_copy(entry_uri, str(dest_file), recursive=False, verbose=show_copy):
                 # Verify copy succeeded (skip verification in dry-run mode)
                 if gio_utils.DRY_RUN:
                     # In dry-run, just count it as successful
@@ -684,7 +684,7 @@ def _sync_desktop_to_phone(src_dir: Path, dest_uri: str, rel_path: str,
                     continue
             
             # File is new or changed - copy it
-            if gio_utils.gio_copy(str(resolved), dest_file_uri, recursive=False, overwrite=True, verbose=verbose):
+            if gio_utils.gio_copy(str(resolved), dest_file_uri, recursive=False, verbose=verbose):
                 stats["copied"] += 1
                 # Track transfer stats
                 if transfer_tracker:
