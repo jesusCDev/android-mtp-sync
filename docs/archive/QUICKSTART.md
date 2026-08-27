@@ -153,6 +153,7 @@ after you close the terminal, and `--web --stop` to shut it down.
 | What | Path |
 |---|---|
 | Profiles and rules | `~/.config/phone-migration/config.json` |
+| Web UI history and bookmarks | `~/.config/phone-migration/{history,bookmarks}.json` |
 | Backup resume state | `~/.local/share/phone-migration/state.json` (+ `state.lock`) |
 | Web UI pid + log | `~/.local/state/phone-migration/` |
 

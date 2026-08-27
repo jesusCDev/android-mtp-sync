@@ -304,13 +304,15 @@ far. The spinner writes with carriage returns, so redirect to a file or set
 | What | Path |
 |---|---|
 | Configuration (profiles + rules) | `~/.config/phone-migration/config.json` |
+| Web UI run history | `~/.config/phone-migration/history.json` |
+| Web UI folder bookmarks | `~/.config/phone-migration/bookmarks.json` |
 | Backup resume state | `~/.local/share/phone-migration/state.json` |
 | Backup state lock | `~/.local/share/phone-migration/state.lock` |
 | Web UI pid file | `~/.local/state/phone-migration/web.pid` |
 | Web UI log | `~/.local/state/phone-migration/web.log` |
 
-`XDG_CONFIG_HOME` overrides the config directory; `XDG_STATE_HOME` overrides the
-pid file and log.
+`XDG_CONFIG_HOME` overrides the config directory — which is the first three rows,
+history and bookmarks included; `XDG_STATE_HOME` overrides the pid file and log.
 
 Every read-modify-write of `state.json` happens while holding an exclusive
 `fcntl` lock on `state.lock`, so two runs racing on different rules cannot drop
@@ -489,6 +491,137 @@ Next steps:
 
 (These samples were captured with `PHONE_SYNC_PLAIN_ICONS=1 NO_COLOR=1`. With a
 Nerd Font terminal the icons are Font Awesome glyphs instead.)
+
+## Web UI guide
+
+```bash
+pip install -r requirements-web.txt
+phone-sync --web
+```
+
+Then open **http://127.0.0.1:8080**. `requirements-web.txt` pins **Flask alone**;
+nothing else is needed, and `flask-cors` — which earlier versions listed — is no
+longer used. If you installed it for this tool you can `pip uninstall flask-cors`.
+
+### Pages
+
+- **Dashboard** — device connection status, run controls, live progress, and the
+  operations list. "Run Auto Rules" skips manual-only rules; "Run Manual Rules"
+  runs the ones you tick, by id. Registering the connected phone is done from
+  here too.
+- **Profiles** — view, rename and delete profiles.
+- **Rules** — add and delete rules for any of the four modes, with a graphical
+  folder browser for both endpoints. To *change* an existing rule, use the CLI:
+  `phone-sync --edit-rule -p PROFILE -i r-0001 ...`.
+- **History** — past runs loaded from `~/.config/phone-migration/history.json`,
+  filterable by status, with per-rule and per-file detail.
+- **Documentation** — this reference material, served in-app.
+
+### Run controls
+
+The dashboard's **"Rename on Conflict" toggle ships on.** That is the opposite of
+what a plain CLI `--run` does for backup rules, which skip on conflict. A backup
+rule started from the dashboard will rename duplicates unless you untick the
+toggle first. Move and copy rename either way. See the conflict table in
+[docs/OPERATIONS.md](docs/OPERATIONS.md#conflict-resolution-summary).
+
+Runs are one-at-a-time: starting a second while one is in flight is refused with
+`409 A run is already in progress`.
+
+### Run history
+
+`~/.config/phone-migration/history.json` keeps the **100 most recent runs**,
+newest first, written atomically so an interrupted save cannot truncate it. Each
+entry holds the timestamp, profile, success or failure, the per-rule statistics,
+the per-file listings and the run's log lines. It is loaded when the server
+starts. `GET /api/history?limit=N` reads it back, with `N` clamped to 1-100
+(default 10).
+
+### Folder browser and bookmarks
+
+For desktop paths the browser starts in your home directory; navigate with
+breadcrumbs or the Up button, type a path directly, toggle hidden entries, and
+create a new folder. For phone paths the phone must be connected and unlocked.
+Files are listed for context but only directories can be selected. Folder
+bookmarks are saved to `~/.config/phone-migration/bookmarks.json`, also written
+atomically.
+
+**Desktop paths are confined to `$HOME`, `/media`, `/mnt` and `/run/media`.**
+That applies to folder browsing, to creating a folder, to saving a desktop
+bookmark, and to the `desktop_path` you store on a rule — a rule is a path the
+runner writes to later, so it is checked when it is stored, not only when it is
+browsed. Anything outside those four roots is refused with
+`403 Path is outside the allowed directories: <path>`. That message means a
+deliberate refusal, not a typo — whereas `404 Directory not found` means the path
+really is missing, and `400 Invalid path` means it could not be resolved at all
+(an embedded NUL, or a `~user` with no such user).
+
+### Scripting the HTTP API
+
+The API has no auth token. Two rules stand in for one, and the first applies to
+**every** request, including GET:
+
+1. **The request must arrive with a `Host` the server answers to** — bare
+   `localhost`, `127.0.0.1` or `[::1]`, plus `127.0.0.1:8080` and
+   `localhost:8080` for the port actually bound. Note that `[::1]:8080` is *not*
+   on the list. Anything else is `403 {"error": "Bad host"}`. This is what stops
+   a DNS name rebound to `127.0.0.1` from reaching a server bound to loopback —
+   so a `curl` through such a name is refused even on a plain GET.
+2. **Every request other than GET, HEAD and OPTIONS must be same-origin.**
+   Browsers set `Sec-Fetch-Site: same-origin` automatically, so the UI itself
+   just works, but a request from `curl` needs the header spelled out, or an
+   `Origin` whose host matches. Otherwise the answer is
+   `403 {"error": "Cross-origin request refused"}`.
+
+```bash
+# GET: only the Host rule applies
+curl http://127.0.0.1:8080/api/status
+
+# Anything mutating: Host *and* the same-origin header
+curl -X POST http://127.0.0.1:8080/api/run \
+  -H 'Sec-Fetch-Site: same-origin' \
+  -H 'Content-Type: application/json' \
+  -d '{"dry_run": true}'
+```
+
+Note that `POST /api/run` defaults `dry_run` to `false` — the opposite of the
+CLI. Pass `"dry_run": true` explicitly when you only want a preview. Omitting
+`rename_duplicates` entirely leaves each mode's own default in place; sending it
+as a bool overrides every mode.
+
+`GET /api/run/status` returns the run's **structured result** — `running`,
+`progress`, the log lines, and a `result` object carrying the stats, the per-rule
+outcomes and the per-file actions. Nothing in the UI parses the log text to work
+out what happened, so rewording a CLI output line cannot break the dashboard.
+
+### Registering a device
+
+There is no `/api/device/register`. `GET /api/device/detect` lists connected
+phones, and registration is:
+
+```bash
+curl -X POST http://127.0.0.1:8080/api/profiles \
+  -H 'Sec-Fetch-Site: same-origin' \
+  -H 'Content-Type: application/json' \
+  -d '{"name": "default", "device_id": "<mtp_id from /api/device/detect>"}'
+```
+
+A phone that exposes no MTP serial is listed by `/api/device/detect` but
+**cannot** be registered: the route answers
+`400 Device exposes no serial number; cannot register it reliably`, for the same
+reason the CLI refuses it.
+
+### Running the hardware test suite
+
+`POST /api/tests/run` starts `tests/test_edge_cases.py` as a subprocess and
+streams its output to `GET /api/tests/status`. **This is not a dry run.** That
+script performs real file operations on the connected phone and on the desktop,
+and it reads and rewrites your real `~/.local/share/phone-migration/state.json`
+— do not trigger it in the middle of a backup you care about resuming. It needs
+a connected device (`400` otherwise) and video files you supply yourself in
+`tests/videos/`; see [tests/README_TESTS.md](tests/README_TESTS.md). Being a
+POST, it sits behind the same host and same-origin guards as every other
+mutating route, and a second start while one is running is refused with `409`.
 
 ## Examples
 

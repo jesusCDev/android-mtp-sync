@@ -43,7 +43,7 @@ config, state and history paths into a temporary directory for every test, and
 | `test_theme.py` | palette contrast, icon widths, and that no module references a `Colors.X` / `Icons.X` that does not exist |
 | `test_no_emoji.py` | an emoji and wide-glyph sweep over the CLI-facing modules |
 | `test_dry_run_safety.py` | `dry_run_analyzer.analyze_dry_run_results` against synthetic rule/stats pairs |
-| `test_web_ui.py` | the web UI's routes, host and origin guards, and path confinement |
+| `test_web_ui.py` | the web UI's routes, its host and same-origin guards, desktop path confinement, and the structured run result the dashboard renders (98 tests) |
 
 `test_dry_run_safety.py` is plain pytest functions rather than a class, and it
 touches nothing outside the analyzer: it feeds it `(rule, stats)` tuples and
@@ -62,6 +62,9 @@ python3 tests/test_edge_cases.py
 It is a standalone integration script that drives a real phone through
 `tests/helpers/mtp_testlib.py`. It is **known to be out of date and is not run by
 CI**; treat it as a starting point rather than a passing suite.
+
+The web UI's `POST /api/tests/run` starts **this** script, not the pytest suite,
+so everything below about what it touches applies there too.
 
 ### What it needs
 

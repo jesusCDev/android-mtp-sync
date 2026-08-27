@@ -138,6 +138,23 @@ review is that dry run is now genuinely side-effect free and **`--run` without
 - **Alerts show on every page.** The alert container moved to the base template;
   it previously existed only on the dashboard and rules pages, so errors raised
   on Profiles and History were silently swallowed.
+- **`POST /api/device/register` is gone.** Registering the connected phone from
+  the web UI is `POST /api/profiles {"name", "device_id"}`, with `device_id` the
+  `mtp_id` from `GET /api/device/detect`. A phone with no MTP serial is listed
+  but refused with `400 Device exposes no serial number; cannot register it
+  reliably`, matching the CLI.
+- **Folder bookmarks** moved to `~/.config/phone-migration/bookmarks.json` —
+  the same default path as before, now derived from `XDG_CONFIG_HOME` and written
+  atomically. Saving a desktop bookmark is path-confined like every other desktop
+  path.
+- **Backup rules are visible on the Rules page.** They previously did not render,
+  which also made them undeletable from the UI.
+- **The DRY RUN badge is a fact, not a guess.** It comes from the run's own
+  result instead of a substring match on the log text.
+- **`POST /api/tests/run`** starts the hardware edge-case script against the
+  connected phone. It performs real file operations, so it sits behind the same
+  host and same-origin guards as every other mutating route, refuses to start
+  without a device (`400`) or while already running (`409`).
 
 ### Docs
 
