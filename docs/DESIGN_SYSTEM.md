@@ -139,11 +139,13 @@ pieces, all drawn from `Colors` and `Icons` like everything else:
 - **`Spinner`** — a daemon thread cycling `| / - \\` at 10 Hz on a carriage
   return, in `INFO`. `stop()` erases the line and optionally prints one final
   line in its place.
-- **`RuleProgress`** — wraps a `Spinner` per rule. While the rule runs the line
-  reads `[2/5] SYNC (r-0003)`, updated in place with running file and folder
-  counts and a files/second rate. On completion the spinner line is replaced by
-  a single settled line: `OK`/`FAIL` icon, the rule's summary, and the elapsed
-  time, in `SUCCESS` or `ERROR`.
+- **`RuleProgress`** — wraps a `Spinner` per rule. The line is set once when the
+  rule starts, reading `[2/5] SYNC (r-0003)`, and spins unchanged until the rule
+  finishes; the spinner line is then replaced by a single settled line: `OK`/
+  `FAIL` icon, the rule's summary, and the elapsed time, in `SUCCESS` or `ERROR`.
+  (`update()` and `update_counts()` exist on the class and would rewrite the
+  message with live file counts and a files/second rate, but nothing calls them —
+  treat them as unused.)
 - **`OperationProgress`** — one bar across all rules, in `ACCENT`, suffixed with
   an ETA extrapolated from the rules that have already finished.
 
@@ -194,11 +196,13 @@ Rules for profile 's25-ultra' (5 total)
   Desktop: ~/Downloads
   Action:  Copy to desktop, then delete from phone
   ····························································
-
+…
 [r-0003] ⇄ SYNC
   Desktop: ~/Videos/phone_videos/ck (source)
   Phone:   /Videos/ck
   Action:  Mirror desktop to phone (desktop is source of truth)
+  ····························································
+…
 ```
 
 Conventions in use:

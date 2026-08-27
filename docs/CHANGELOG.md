@@ -89,6 +89,13 @@ review is that dry run is now genuinely side-effect free and **`--run` without
   device is no longer reported as two.
 - **An empty `desktop_path` is rejected** instead of silently resolving to the
   current working directory.
+- **Sync guards against symlink loops.** A symlinked desktop directory that leads
+  back into a directory the scan already walked is detected by inode and not
+  followed again, and the scan is marked incomplete so no phone-side deletion
+  follows from it.
+- **`state.json` is locked.** Every read-modify-write happens under an exclusive
+  `fcntl` lock on `~/.local/share/phone-migration/state.lock`, so concurrent runs
+  cannot drop each other's backup progress.
 
 ### Dry run
 
@@ -191,13 +198,6 @@ review is that dry run is now genuinely side-effect free and **`--run` without
 - **Test videos are no longer in the repository.** `tests/videos/` was removed
   and is gitignored; the hardware test script expects you to drop your own files
   there. Nothing in the pytest suite needs them.
-- **Sync guards against symlink loops.** A symlinked desktop directory that leads
-  back into a directory the scan already walked is detected by inode and not
-  followed again, and the scan is marked incomplete so no phone-side deletion
-  follows from it.
-- **`state.json` is locked.** Every read-modify-write happens under an exclusive
-  `fcntl` lock on `~/.local/share/phone-migration/state.lock`, so concurrent runs
-  cannot drop each other's backup progress.
 - **Documentation moved under `docs/`.** `CHANGELOG.md`, `TODO.md`,
   `CLEANUP_SUMMARY.md` and `warp.md` left the repository root; `README.md`
   stayed. `docs/RULE_MODES.md` is now `docs/OPERATIONS.md`.

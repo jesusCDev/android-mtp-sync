@@ -281,8 +281,9 @@ phone-sync --run -r r-0003 -y      # just this one
 
 `--edit-rule --no-manual` clears the flag on an existing rule.
 
-In the web UI, "Run Auto Rules" skips manual-only rules and "Run Manual Rules"
-runs the ones you tick.
+In the web UI, the button labelled "Run All Rules" behaves like a plain `--run`
+and therefore skips manual-only rules, despite the label; "Run Manual Rules" runs
+the ones you tick.
 
 ---
 

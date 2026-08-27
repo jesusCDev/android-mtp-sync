@@ -449,7 +449,7 @@ Rules for profile 's25-ultra' (5 total)
   Desktop: ~/Downloads
   Action:  Copy to desktop, then delete from phone
   ····························································
-
+…
 [r-0003] ⇄ SYNC
   Desktop: ~/Videos/phone_videos/ck (source)
   Phone:   /Videos/ck
@@ -460,6 +460,8 @@ Rules for profile 's25-ultra' (5 total)
   Phone:   /Documents/ringtone
   Desktop: ~/Downloads/test
   Action:  Backup to desktop (resumable, no deletions)
+  ····························································
+…
 ```
 
 A preview run with nothing plugged in:
@@ -487,6 +489,7 @@ Next steps:
   1. Connect phone & enable File Transfer
   2. Register: phone-sync --add-device --name default
   3. Execute: phone-sync --run -y
+…
 ```
 
 (These samples were captured with `PHONE_SYNC_PLAIN_ICONS=1 NO_COLOR=1`. With a
@@ -506,9 +509,10 @@ longer used. If you installed it for this tool you can `pip uninstall flask-cors
 ### Pages
 
 - **Dashboard** — device connection status, run controls, live progress, and the
-  operations list. "Run Auto Rules" skips manual-only rules; "Run Manual Rules"
-  runs the ones you tick, by id. Registering the connected phone is done from
-  here too.
+  operations list. The button labelled "Run All Rules" is the equivalent of a
+  plain `--run`, so despite the label it skips manual-only rules; "Run Manual
+  Rules" runs the ones you tick, by id. Registering the connected phone is done
+  from here too.
 - **Profiles** — view, rename and delete profiles.
 - **Rules** — add and delete rules for any of the four modes, with a graphical
   folder browser for both endpoints. To *change* an existing rule, use the CLI:
