@@ -82,7 +82,7 @@ def test_edit_rule_forwards_the_tri_state_manual_value(monkeypatch, no_config):
 def test_run_manual_reaches_the_runner_with_include_manual(monkeypatch, no_config):
     seen = {}
     monkeypatch.setattr(runner, "run_for_connected_device",
-                        lambda config, **kw: seen.update(kw) or {})
+                        lambda config, **kw: seen.update(kw) or {"profile": "default", "stats": {}})
 
     assert main.main(["--run", "--manual"]) == 0
     assert seen["include_manual"] is True
@@ -92,7 +92,7 @@ def test_run_manual_reaches_the_runner_with_include_manual(monkeypatch, no_confi
 def test_run_without_manual_does_not_include_manual_rules(monkeypatch, no_config):
     seen = {}
     monkeypatch.setattr(runner, "run_for_connected_device",
-                        lambda config, **kw: seen.update(kw) or {})
+                        lambda config, **kw: seen.update(kw) or {"profile": "default", "stats": {}})
 
     assert main.main(["--run", "-y"]) == 0
     assert seen["include_manual"] is False
@@ -354,11 +354,26 @@ def test_no_emoji_or_double_width_glyphs(path):
 
 def test_run_exits_1_when_the_run_reported_errors(monkeypatch, no_config):
     monkeypatch.setattr(runner, "run_for_connected_device",
-                        lambda config, **kw: {"stats": {"errors": 2}})
+                        lambda config, **kw: {"profile": "default", "stats": {"errors": 2}})
     assert main.main(["--run"]) == 1
 
 
 def test_run_exits_0_when_the_run_reported_no_errors(monkeypatch, no_config):
     monkeypatch.setattr(runner, "run_for_connected_device",
-                        lambda config, **kw: {"stats": {"errors": 0}})
+                        lambda config, **kw: {"profile": "default", "stats": {"errors": 0}})
     assert main.main(["--run"]) == 0
+
+
+def test_run_exits_2_when_no_device_is_connected(monkeypatch, no_config):
+    monkeypatch.setattr(runner, "run_for_connected_device",
+                        lambda config, **kw: {
+                            "profile": None,
+                            "device": None,
+                            "dry_run": True,
+                            "stats": {"copied": 0, "renamed": 0, "deleted": 0, "errors": 0,
+                                      "skipped": 0, "moved": 0, "synced": 0, "backed_up": 0,
+                                      "resumed": 0, "folders": 0},
+                            "transfer": None,
+                            "rules": [],
+                        })
+    assert main.main(["--run"]) == 2

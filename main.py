@@ -471,8 +471,12 @@ def main(argv=None):
                 notify=args.notify,
                 include_manual=manual_flag,
             )
-            # A skipped rule, a failed copy or an unknown mode all land in
-            # "errors"; scripts and the shell need to see that in $?.
+            # Nothing ran at all (no connected device) is distinct from a run
+            # that ran and failed; a skipped rule, a failed copy or an unknown
+            # mode all land in "errors" - scripts and the shell need to see
+            # that in $?.
+            if result.get("profile") is None:
+                return 2
             return 1 if result.get("stats", {}).get("errors", 0) else 0
 
         if args.browse_phone:
