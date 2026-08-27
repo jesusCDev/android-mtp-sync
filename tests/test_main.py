@@ -6,6 +6,7 @@ import signal
 import subprocess
 import sys
 import unicodedata
+import webbrowser
 
 import pytest
 
@@ -229,7 +230,7 @@ def test_background_start_reports_the_url_when_the_port_opens(pid_file, monkeypa
     monkeypatch.setattr(subprocess, "Popen", lambda *a, **kw: FakeProc())
     monkeypatch.setattr(main, "_wait_port", lambda port, want_open, timeout=5.0: True)
 
-    assert main.main(["--web", "--background"]) == 0
+    assert main.main(["--web", "--background", "--no-browser"]) == 0
     assert f"127.0.0.1:{main.WEB_PORT}" in capsys.readouterr().out
 
 
@@ -244,10 +245,75 @@ def test_foreground_web_writes_and_removes_its_pid_file(pid_file, monkeypatch):
     monkeypatch.setattr(web_ui, "start_web_ui", fake_start)
     monkeypatch.setattr(main, "_wait_port", lambda port, want_open, timeout=5.0: True)
 
-    assert main.main(["--web"]) == 0
+    assert main.main(["--web", "--no-browser"]) == 0
     assert seen["running_pid"] == str(os.getpid())
     assert seen["args"] == ("127.0.0.1", main.WEB_PORT, False)
     assert not pid_file.exists()
+
+
+# --------------------------------------------------------------------------
+# auto-open a browser tab
+# --------------------------------------------------------------------------
+
+def test_background_web_opens_a_browser_tab(pid_file, monkeypatch, capsys):
+    class FakeProc:
+        pid = 4242
+    monkeypatch.setattr(subprocess, "Popen", lambda *a, **kw: FakeProc())
+    monkeypatch.setattr(main, "_wait_port", lambda port, want_open, timeout=5.0: True)
+    opened = []
+    monkeypatch.setattr(webbrowser, "open_new_tab", lambda url: opened.append(url))
+
+    assert main.main(["--web", "--background"]) == 0
+    assert opened == [f"http://127.0.0.1:{main.WEB_PORT}"]
+    assert "Opening" in capsys.readouterr().out
+
+
+def test_no_browser_suppresses_the_background_open(pid_file, monkeypatch, capsys):
+    class FakeProc:
+        pid = 4242
+    monkeypatch.setattr(subprocess, "Popen", lambda *a, **kw: FakeProc())
+    monkeypatch.setattr(main, "_wait_port", lambda port, want_open, timeout=5.0: True)
+    opened = []
+    monkeypatch.setattr(webbrowser, "open_new_tab", lambda url: opened.append(url))
+
+    assert main.main(["--web", "--background", "--no-browser"]) == 0
+    assert opened == []
+
+
+def test_foreground_web_opens_a_browser_tab(pid_file, monkeypatch):
+    from phone_migration import web_ui
+
+    monkeypatch.setattr(web_ui, "start_web_ui", lambda **kw: None)
+    monkeypatch.setattr(main, "_wait_port", lambda port, want_open, timeout=5.0: True)
+    opened = []
+    monkeypatch.setattr(webbrowser, "open_new_tab", lambda url: opened.append(url))
+
+    assert main.main(["--web"]) == 0
+    main._browser_thread.join(timeout=2)
+    assert opened == [f"http://127.0.0.1:{main.WEB_PORT}"]
+
+
+def test_stop_never_opens_a_browser(pid_file, monkeypatch, capsys):
+    pid_file.write_text(str(os.getpid()))  # not the web UI; --stop is a no-op
+    opened = []
+    monkeypatch.setattr(webbrowser, "open_new_tab", lambda url: opened.append(url))
+
+    assert main.main(["--web", "--stop"]) == 0
+    assert opened == []
+
+
+def test_a_browser_open_failure_does_not_fail_the_command(pid_file, monkeypatch, capsys):
+    class FakeProc:
+        pid = 4242
+    monkeypatch.setattr(subprocess, "Popen", lambda *a, **kw: FakeProc())
+    monkeypatch.setattr(main, "_wait_port", lambda port, want_open, timeout=5.0: True)
+
+    def boom(url):
+        raise RuntimeError("no display")
+    monkeypatch.setattr(webbrowser, "open_new_tab", boom)
+
+    assert main.main(["--web", "--background"]) == 0
+    assert "Could not open a browser" in capsys.readouterr().out
 
 
 def test_port_probe_reports_a_closed_port():

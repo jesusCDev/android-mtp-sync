@@ -239,6 +239,10 @@ The server binds **`http://127.0.0.1:8080`** — loopback only, never a public
 interface. Start-up refuses to proceed if port 8080 is already in use rather
 than half-starting.
 
+Once the server is reachable, a browser tab opens automatically (via the
+stdlib `webbrowser` module, honoring `$BROWSER` if set). Pass `--no-browser`
+to skip this — the server still starts, nothing opens.
+
 ### Environment variables
 
 | Variable | Effect |

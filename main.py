@@ -8,7 +8,9 @@ import signal
 import socket
 import subprocess
 import sys
+import threading
 import time
+import webbrowser
 from pathlib import Path
 from typing import Optional
 
@@ -22,6 +24,9 @@ STOP_TIMEOUT = 5.0   # seconds to wait for a signalled web server to actually ex
 STATE_DIR = Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local" / "state") / "phone-migration"
 PID_FILE = STATE_DIR / "web.pid"
 WEB_LOG = STATE_DIR / "web.log"
+
+# Test hook: the foreground path's opener thread, so tests can join it.
+_browser_thread: Optional[threading.Thread] = None
 
 
 # ---------------------------------------------------------------------------
@@ -116,6 +121,22 @@ def _survivor_message(pid: int) -> None:
           f"after {STOP_TIMEOUT:g}s; stop it by hand and retry", file=sys.stderr)
 
 
+def _open_browser_tab() -> None:
+    """Open the web UI in the user's default browser. Never raises."""
+    url = f"http://{WEB_HOST}:{WEB_PORT}"
+    print(f"{Colors.DIM}{Icons.INFO}{Colors.RESET} Opening {url} in your browser")
+    try:
+        webbrowser.open_new_tab(url)
+    except Exception as e:
+        print(f"{Colors.MUTED}Could not open a browser: {e}{Colors.RESET}")
+
+
+def _wait_and_open_browser() -> None:
+    """Foreground opener thread body: wait for the server, then open the tab."""
+    if _wait_port(WEB_PORT, True):
+        _open_browser_tab()
+
+
 def _run_web(args) -> int:
     """--web, --web --background, --web --stop."""
     if args.stop:
@@ -157,6 +178,8 @@ def _run_web(args) -> int:
             print(f"{Colors.SUCCESS}{Icons.OK}{Colors.RESET} Web UI running at "
                   f"{Colors.PATH}http://{WEB_HOST}:{WEB_PORT}{Colors.RESET}")
             print(f"   {Colors.DIM}To stop: phone-sync --web --stop{Colors.RESET}")
+            if not args.no_browser:
+                _open_browser_tab()
             return 0
         print(f"{Colors.ERROR}{Icons.FAIL}{Colors.RESET} Web UI did not come up on port "
               f"{WEB_PORT}. Last lines of {WEB_LOG}:", file=sys.stderr)
@@ -165,6 +188,12 @@ def _run_web(args) -> int:
 
     # Foreground: this process is the server, so it owns the pid file.
     PID_FILE.write_text(str(os.getpid()))
+    global _browser_thread
+    _browser_thread = None
+    if not args.no_browser:
+        # start_web_ui() blocks, so the opener has to poll from its own thread.
+        _browser_thread = threading.Thread(target=_wait_and_open_browser, daemon=True)
+        _browser_thread.start()
     try:
         from phone_migration import web_ui
         web_ui.start_web_ui(host=WEB_HOST, port=WEB_PORT, debug=False)
@@ -285,6 +314,8 @@ Automate file transfers between Android phone (MTP) and Linux desktop.
                           help="Run as background daemon (survives terminal close)")
     web_opts.add_argument("--stop", action="store_true",
                           help="Stop any running web UI instance")
+    web_opts.add_argument("--no-browser", action="store_true",
+                          help="Do not open a browser tab")
 
     device_opts = p.add_argument_group('Device options (for --add-device)')
     device_opts.add_argument("-n", "--name", metavar="NAME",
