@@ -330,7 +330,7 @@ let deviceStatus = null;
             html += '<div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid rgba(255,255,255,0.1);">';
             html += '<div style="font-size: 12px; color: var(--text-muted); margin-bottom: 8px;"><i class="fas fa-check"></i> Selected Rules:</div>';
             selectedRules.forEach(id => {
-                html += `<div style="font-size: 13px; color: var(--text); font-family: monospace; margin-left: 16px;">- ${id}</div>`;
+                html += `<div style="font-size: 13px; color: var(--text); font-family: monospace; margin-left: 16px;">- ${escapeHtml(id)}</div>`;
             });
             html += '</div>';
         }
@@ -669,13 +669,6 @@ let deviceStatus = null;
         }
     }
     
-    function hideOperationProgress() {
-        const card = document.getElementById('operation-progress-card');
-        if (card) {
-            card.style.display = 'none';
-        }
-    }
-    
     function setOperationPhase(text) {
         const phaseText = document.getElementById('operation-phase-text');
         if (phaseText) phaseText.textContent = text;
@@ -965,9 +958,6 @@ let deviceStatus = null;
         const notifyOption = document.getElementById('notify-option');
         const renameOption = document.getElementById('rename-duplicates-option');
         const navLinks = document.querySelectorAll('.nav-link');
-        
-        // Hide operation progress card after a delay
-        hideOperationProgress();
         
         // Re-enable buttons and options
         runBtn.disabled = false;

@@ -57,6 +57,10 @@ def client(monkeypatch):
     """conftest already repoints HISTORY_FILE/BOOKMARKS_FILE/config at tmp_path."""
     monkeypatch.setattr(web_ui, "current_run_status",
                         {"running": False, "progress": 0, "logs": [], "result": None})
+    monkeypatch.setattr(web_ui, "test_run_status",
+                        {"running": False, "progress": 0, "logs": [],
+                         "results": {"passed": 0, "failed": 0, "skipped": 0},
+                         "failed_tests": []})
     web_ui.app.config["TESTING"] = True
     return web_ui.app.test_client()
 
@@ -490,6 +494,134 @@ def test_a_failed_history_write_still_clears_running(client, monkeypatch):
 
 
 # --------------------------------------------------------------------------
+# fix round 1: /api/run and /api/tests/run share one lock
+# --------------------------------------------------------------------------
+
+@pytest.fixture
+def connected(monkeypatch):
+    """A device is present, so /api/tests/run gets past its precondition."""
+    monkeypatch.setattr(runner, "detect_connected_device",
+                        lambda config, verbose=False: {"name": "pixel", "device": {}})
+
+
+def test_tests_are_refused_while_a_run_is_going(client, connected, monkeypatch):
+    gate = threading.Event()
+    monkeypatch.setattr(runner, "run_for_connected_device", fake_run(gate=gate))
+    try:
+        assert client.post("/api/run", json={}, headers=SAME_ORIGIN).status_code == 200
+        resp = client.post("/api/tests/run", json={}, headers=SAME_ORIGIN)
+        assert resp.status_code == 409
+        assert web_ui.test_run_status["running"] is False
+    finally:
+        gate.set()
+    wait_idle(client)
+
+
+def test_a_busy_device_beats_the_no_device_error(client, monkeypatch):
+    """No `connected` fixture: the busy check must fire before the gio probe."""
+    gate = threading.Event()
+    monkeypatch.setattr(runner, "run_for_connected_device", fake_run(gate=gate))
+    monkeypatch.setattr(runner, "detect_connected_device",
+                        lambda *a, **k: pytest.fail("probed the device mid-run"))
+    try:
+        assert client.post("/api/run", json={}, headers=SAME_ORIGIN).status_code == 200
+        assert client.post("/api/tests/run", json={},
+                           headers=SAME_ORIGIN).status_code == 409
+    finally:
+        gate.set()
+    wait_idle(client)
+
+
+def test_a_run_is_refused_while_the_tests_are_going(client, connected, monkeypatch):
+    gate = threading.Event()
+    monkeypatch.setattr(web_ui, "_test_worker", lambda *a: gate.wait(5))
+    try:
+        assert client.post("/api/tests/run", json={}, headers=SAME_ORIGIN).status_code == 200
+        resp = client.post("/api/run", json={}, headers=SAME_ORIGIN)
+        assert resp.status_code == 409
+        assert web_ui.current_run_status["running"] is False
+    finally:
+        gate.set()
+
+
+def test_tests_status_hands_back_a_copy_of_the_logs(client):
+    """jsonify iterates `logs` while the worker thread appends to it."""
+    source = (ROOT / "phone_migration" / "web_ui.py").read_text(encoding="utf-8")
+    handler = source.split("def api_test_status():")[1].split("@app.route")[0]
+    assert 'list(test_run_status["logs"])' in handler
+    assert "jsonify(test_run_status)" not in source
+
+    web_ui.test_run_status["logs"].append("first")
+    assert client.get("/api/tests/status").get_json()["logs"] == ["first"]
+
+
+def test_the_test_button_stays_disabled_during_a_run():
+    """dashboard.html re-enables it every second; a run has to win that race."""
+    source = (ROOT / "phone_migration" / "web_templates" / "dashboard.html").read_text()
+    body = source.split("function updateTestButton()")[1].split("}")[0]
+    assert "isRunning" in body
+
+
+# --------------------------------------------------------------------------
+# fix round 1: private-use glyphs never reach the browser
+# --------------------------------------------------------------------------
+
+def test_nerd_font_glyphs_are_stripped_from_the_log_stream(client, monkeypatch):
+    """theme.Icons picks private-use codepoints from the terminal env; a
+    browser renders those as tofu."""
+    monkeypatch.setattr(runner, "run_for_connected_device",
+                        fake_run(line="\uf10b  Phone"))
+    client.post("/api/run", json={}, headers=SAME_ORIGIN)
+    assert "Phone" in wait_idle(client)["logs"]
+
+
+def test_supplementary_private_use_glyphs_are_stripped_too(client, monkeypatch):
+    monkeypatch.setattr(runner, "run_for_connected_device",
+                        fake_run(line="\U000f0001 Connected"))
+    client.post("/api/run", json={}, headers=SAME_ORIGIN)
+    assert "Connected" in wait_idle(client)["logs"]
+
+
+def test_indentation_survives_glyph_stripping(client, monkeypatch):
+    monkeypatch.setattr(runner, "run_for_connected_device",
+                        fake_run(line="  \uf111 Phone not connected"))
+    client.post("/api/run", json={}, headers=SAME_ORIGIN)
+    assert "  Phone not connected" in wait_idle(client)["logs"]
+
+
+# --------------------------------------------------------------------------
+# fix round 1: minors
+# --------------------------------------------------------------------------
+
+def test_a_non_string_path_is_a_400(client, home):
+    """A JSON object where a path belongs must not be an unhandled 500."""
+    for junk in ({"a": 1}, ["x"], 7):
+        resp = client.post("/api/folder/create", json={"path": junk}, headers=SAME_ORIGIN)
+        assert resp.status_code == 400, junk
+
+
+def test_a_non_string_rule_path_is_a_400(client, home):
+    _seed_profiles("pixel")
+    resp = client.post("/api/rules", headers=SAME_ORIGIN, json={
+        "profile": "pixel", "mode": "copy",
+        "phone_path": "/DCIM", "desktop_path": {"a": 1}})
+    assert resp.status_code == 400
+
+
+def test_an_origin_on_another_scheme_is_refused(client):
+    """https://localhost is a different origin from http://localhost."""
+    resp = client.post("/api/run", json={}, headers={"Origin": "https://localhost"})
+    assert resp.status_code == 403
+
+
+def test_a_matching_scheme_and_host_is_accepted(client, monkeypatch):
+    monkeypatch.setattr(runner, "run_for_connected_device", fake_run())
+    resp = client.post("/api/run", json={}, headers={"Origin": "http://localhost"})
+    assert resp.status_code == 200
+    wait_idle(client)
+
+
+# --------------------------------------------------------------------------
 # history storage
 # --------------------------------------------------------------------------
 
@@ -687,7 +819,9 @@ def test_unregistered_devices_use_the_serial_fingerprint(client, monkeypatch):
 
 def test_web_ui_parses_no_cli_output():
     source = (ROOT / "phone_migration" / "web_ui.py").read_text(encoding="utf-8")
-    assert source.count("re.compile") == 1      # the ANSI stripper, nothing else
+    # Two: the ANSI stripper and the private-use-glyph stripper. Both scrub the
+    # log stream for the browser; neither extracts meaning from it.
+    assert source.count("re.compile") == 2
     assert "re.search" not in source
     assert "re.match" not in source
     assert "flask_cors" not in source
@@ -752,6 +886,106 @@ def test_url_path_parameters_are_encoded():
     for name in ("profiles.js", "rules.js", "history.js"):
         source = (JS_DIR / name).read_text(encoding="utf-8")
         assert "encodeURIComponent" in source, f"{name} interpolates raw path parameters"
+
+
+DASHBOARD_DOM_STUB = """
+    const nodes = {};
+    const make = () => ({
+        value: '', innerHTML: '', textContent: '', disabled: false, title: '',
+        style: {}, dataset: {},
+        addEventListener() {}, removeEventListener() {}, appendChild() {},
+        remove() {}, scrollIntoView() {},
+        querySelector: () => make(), querySelectorAll: () => [],
+        classList: { contains: () => false, add() {}, remove() {} }
+    });
+    const byId = (id) => (nodes[id] = nodes[id] || make());
+    global.document = {
+        getElementById: byId, createElement: make, addEventListener() {},
+        querySelector: () => null, querySelectorAll: () => [], body: make()
+    };
+    global.window = { addEventListener() {}, location: { href: '', pathname: '/' } };
+    global.sessionStorage = {
+        getItem: () => null, setItem() {}, removeItem() {}
+    };
+    global.setInterval = () => 0;
+    global.clearInterval = () => {};
+    global.confirm = () => true;
+    global.fetch = async () => { throw new Error('offline'); };
+"""
+
+
+def test_dashboard_js_keeps_the_progress_card_after_a_run():
+    """The port plan lists the rule-progress card as must-preserve: settling
+    its rows and then hiding it in the same tick makes it decorative."""
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not on PATH; cannot exercise dashboard.js")
+
+    harness = f"""
+        const fs = require('fs');
+        {DASHBOARD_DOM_STUB}
+        eval(fs.readFileSync({str(JS_DIR / 'main.js')!r}, 'utf8'));
+        eval(fs.readFileSync({str(JS_DIR / 'dashboard.js')!r}, 'utf8'));
+        
+        allRules = [{{id: 'r-0001', mode: 'copy', phone_path: '/DCIM',
+                     desktop_path: '~/Pictures', manual_only: false}}];
+        showOperationProgress('auto');
+        const card = document.getElementById('operation-progress-card');
+        if (card.style.display !== 'block') throw new Error('card never shown');
+        
+        applyResultToProgress({{rules: [{{id: 'r-0001', mode: 'copy', stats: {{copied: 2}},
+                                        error: null, files: []}}]}});
+        resetRunButton();
+        if (card.style.display !== 'block') {{
+            throw new Error('progress card hidden on completion: ' + card.style.display);
+        }}
+        if (document.getElementById('operation-status-text').textContent !== 'Finished 1 rule') {{
+            throw new Error('rows never settled');
+        }}
+        process.stdout.write('ok');
+    """
+    proc = subprocess.run([node, "-e", harness], capture_output=True, text=True)
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout == "ok"
+
+
+def test_dashboard_js_escapes_the_selected_rule_ids():
+    """buildCommandPreview interpolates server-supplied rule ids into HTML."""
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not on PATH; cannot exercise dashboard.js")
+
+    harness = f"""
+        const fs = require('fs');
+        {DASHBOARD_DOM_STUB}
+        eval(fs.readFileSync({str(JS_DIR / 'main.js')!r}, 'utf8'));
+        eval(fs.readFileSync({str(JS_DIR / 'dashboard.js')!r}, 'utf8'));
+        
+        const html = buildCommandPreview(true, ['<img onerror=alert(1)>']);
+        if (html.includes('<img')) throw new Error('rule id reached innerHTML raw');
+        if (!html.includes('&lt;img')) throw new Error('rule id not rendered at all');
+        process.stdout.write('ok');
+    """
+    proc = subprocess.run([node, "-e", harness], capture_output=True, text=True)
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout == "ok"
+
+
+def test_the_docs_page_matches_what_the_code_does():
+    """The in-app docs drifted once; these are the claims that drifted."""
+    doc = (ROOT / "phone_migration" / "web_templates" / "documentation.html").read_text(
+        encoding="utf-8")
+
+    assert "\u2194" not in doc                  # sync is one-way, desktop -> phone
+    assert "Smart Copy" not in doc              # the mode is called Backup
+    for claim in ("files that have changed", "haven't changed"):
+        assert claim not in doc, f"backup compares name and size, not content: {claim!r}"
+
+    # Bare `--run` previews; anything phrased as executing needs -y.
+    for item in doc.split("<li>")[1:]:
+        item = item.split("</li>")[0]
+        if "--run" in item and "xecute" in item:
+            assert "-y" in item, " ".join(item.split())
 
 
 def test_history_js_renders_pre_run_result_entries():

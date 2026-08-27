@@ -397,7 +397,8 @@
             </div>
             <div class="mode-card-direction">Phone → Desktop (Resumable)</div>
             <p class="mode-card-description">
-                Smart backup that can resume if interrupted and skips files that haven't changed.
+                Resumable copy that skips a file when the desktop already has one of the same
+                name and size. Nothing is hashed and no timestamp is read.
             </p>
             <div class="mode-features">
                 <div class="feature">
@@ -430,9 +431,11 @@
                 <div class="mode-icon"><i class="fas fa-sync"></i></div>
                 <h3 class="mode-card-title">Sync</h3>
             </div>
-            <div class="mode-card-direction">Desktop ↔ Phone</div>
+            <div class="mode-card-direction">Desktop → Phone (one-way)</div>
             <p class="mode-card-description">
-                Mirror desktop to phone - copies new files and deletes files that no longer exist on desktop.
+                One-way mirror of a desktop folder onto the phone - copies new or differently
+                sized files, and deletes phone files the desktop no longer has. The desktop side
+                is never modified.
             </p>
             <div class="mode-features">
                 <div class="feature">
@@ -496,11 +499,11 @@
                         <td class="status-yes"><i class="fas fa-check"></i> Yes</td>
                         <td class="status-yes"><i class="fas fa-check"></i> Yes</td>
                         <td class="status-no"><i class="fas fa-times"></i> No</td>
-                        <td><strong>Skip (safer)</strong></td>
+                        <td><strong>Skip (safer)</strong><sup>*</sup></td>
                     </tr>
                     <tr>
                         <td><strong>Sync</strong></td>
-                        <td>Desktop ↔ Phone</td>
+                        <td>Desktop → Phone</td>
                         <td class="status-yes"><i class="fas fa-check"></i> Yes</td>
                         <td class="status-yes"><i class="fas fa-check"></i> Yes</td>
                         <td class="status-yes"><i class="fas fa-check"></i> Yes</td>
@@ -508,6 +511,12 @@
                     </tr>
                 </tbody>
             </table>
+            
+            <p style="color: var(--text-muted); font-size: 13px; margin: -8px 0 20px 0;">
+                <sup>*</sup> That is the command-line default. The dashboard's
+                <strong>Rename on Conflict</strong> toggle ships <strong>on</strong>, so a run
+                started from the web UI renames instead of skipping unless you untick it.
+            </p>
         </div>
     </div>
     
@@ -621,10 +630,12 @@ Phone: song1.mp3, song2.mp3, old_song.mp3
             <div style="background: var(--surface); border: 1px solid var(--border-subtle); border-radius: var(--radius-card); padding: 16px;">
                 <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 8px;">
                     <span style="font-size: 24px;"><i class="fas fa-bolt"></i></span>
-                    <strong>Smart Comparison</strong>
+                    <strong>Size Comparison</strong>
                 </div>
                 <p style="color: var(--text-muted); font-size: 13px; margin: 0;">
-                    Only copies files that have changed, skipping unchanged files automatically
+                    A file is re-copied when the desktop copy is missing or a different size.
+                    Same name and same size means skipped - contents are never compared, so an
+                    edit that keeps the byte count is not noticed.
                 </p>
             </div>
             
@@ -651,7 +662,8 @@ Phone: song1.mp3, song2.mp3, old_song.mp3
                     <h4 style="color: var(--text); margin-top: 0;">Automatic Rules</h4>
                     <ul style="color: var(--text-muted); font-size: 13px; margin: 0; padding-left: 20px;">
                         <li>Run with "Run All Rules" button</li>
-                        <li>Execute with <code>phone-sync --run</code></li>
+                        <li>Preview with <code>phone-sync --run</code>, execute with
+                            <code>phone-sync --run -y</code></li>
                         <li>Good for daily backups</li>
                     </ul>
                 </div>
@@ -659,7 +671,8 @@ Phone: song1.mp3, song2.mp3, old_song.mp3
                     <h4 style="color: var(--text); margin-top: 0;">Manual Rules</h4>
                     <ul style="color: var(--text-muted); font-size: 13px; margin: 0; padding-left: 20px;">
                         <li>Run with "Run Manual Rules" button</li>
-                        <li>Execute with <code>phone-sync --run -r rule-id</code></li>
+                        <li>Preview with <code>phone-sync --run -r rule-id</code>, execute with
+                            <code>phone-sync --run -r rule-id -y</code></li>
                         <li>Good for occasional operations</li>
                     </ul>
                 </div>

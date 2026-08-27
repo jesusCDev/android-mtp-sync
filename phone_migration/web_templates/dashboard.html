@@ -349,7 +349,10 @@ async function pollTestStatus() {
 // Enable test button when device is ready
 function updateTestButton() {
     const testBtn = document.getElementById('test-btn');
-    if (deviceStatus && deviceStatus.connected && deviceStatus.accessible && !isValidating) {
+    // This fires every second: a run in progress has to win that race, or the
+    // button re-enables itself mid-run and lets both jobs fight over the phone.
+    if (deviceStatus && deviceStatus.connected && deviceStatus.accessible
+            && !isValidating && !isRunning) {
         testBtn.disabled = false;
         testBtn.style.opacity = '1';
     } else {

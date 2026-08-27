@@ -48,8 +48,12 @@ SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 # does not stop it - the Host it arrives with does.
 ALLOWED_HOSTS = {"localhost", "127.0.0.1", "[::1]"}
 
-# The only regex in this module: colour codes have to come off the log stream.
+# The only two regexes in this module, both scrubbing the log stream for the
+# browser: colour codes, and the private-use codepoints theme.Icons picks when
+# the server inherits a Nerd-Font terminal's environment (tofu in a browser).
+# The trailing \s* closes the gap a removed glyph leaves, keeping indentation.
 _ANSI = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+_PRIVATE_USE = re.compile(r'[\ue000-\uf8ff\U000f0000-\U000ffffd]\s*')
 
 # Global run state. `result` is the RunResult of the last finished run.
 current_run_status = {
@@ -59,7 +63,15 @@ current_run_status = {
     "result": None,
 }
 
+# ponytail: one lock for both jobs - they both drive the same phone over the
+# same MTP mount, so "one at a time" is the whole requirement. Split it only if
+# they ever stop sharing a device.
 _run_lock = threading.Lock()
+
+
+def _busy():
+    """True while either a rule run or the test suite holds the device."""
+    return current_run_status["running"] or test_run_status["running"]
 
 # History and bookmarks live beside the config, wherever XDG points it.
 HISTORY_FILE = cfg.CONFIG_DIR / "history.json"
@@ -88,8 +100,8 @@ def require_same_origin():
     if request.headers.get("Sec-Fetch-Site") in ("same-origin", "none"):
         return None
 
-    origin = request.headers.get("Origin", "")
-    if origin and urlparse(origin).netloc == request.host:
+    origin = urlparse(request.headers.get("Origin", ""))
+    if origin.netloc == request.host and origin.scheme == request.scheme:
         return None
 
     return jsonify({"error": "Cross-origin request refused"}), 403
@@ -119,8 +131,9 @@ def _resolve_desktop_path(raw_path: str):
     """Return (path, None), or (None, error_response) for a refused path."""
     try:
         return _safe_desktop_path(raw_path), None
-    except (ValueError, RuntimeError):          # embedded NUL, bad surrogate,
-        return None, (jsonify({"error": "Invalid path"}), 400)  # unresolvable ~user
+    except (TypeError, ValueError, RuntimeError):    # a JSON object where a path
+        return None, (jsonify({"error": "Invalid path"}), 400)  # belongs, embedded
+                                                    # NUL, unresolvable ~user
     except PermissionError as e:
         return None, (jsonify({"error": str(e)}), 403)
 
@@ -136,7 +149,7 @@ class StreamingOutput(io.TextIOBase):
         self._buffer += text
         while "\n" in self._buffer:
             line, self._buffer = self._buffer.split("\n", 1)
-            line = _ANSI.sub("", line).rstrip()
+            line = _PRIVATE_USE.sub("", _ANSI.sub("", line)).rstrip()
             if line.strip():
                 self._lines.append(line)
         return len(text)
@@ -483,7 +496,7 @@ def api_run():
     data = request.get_json(silent=True) or {}
 
     with _run_lock:
-        if current_run_status["running"]:
+        if _busy():
             return jsonify({"error": "A run is already in progress"}), 409
         current_run_status["running"] = True
         current_run_status["progress"] = 0
@@ -780,8 +793,6 @@ test_run_status = {
     "failed_tests": []
 }
 
-_test_lock = threading.Lock()
-
 
 def _test_worker(test_file, project_root):
     """Stream the edge-case suite's output into test_run_status."""
@@ -823,7 +834,7 @@ def _test_worker(test_file, project_root):
     except Exception as e:
         logs.append(f"{Icons.FAIL} Error: {e}")
     finally:
-        with _test_lock:
+        with _run_lock:
             test_run_status["running"] = False
         test_run_status["progress"] = 100
 
@@ -831,6 +842,11 @@ def _test_worker(test_file, project_root):
 @app.route('/api/tests/run', methods=['POST'])
 def api_run_tests():
     """Run the edge case test suite against the connected device."""
+    # Ahead of the device probe: gio must not go poking at a mount a live run
+    # is already using. The lock below is still the authoritative check.
+    if _busy():
+        return jsonify({"error": "A run is already in progress"}), 409
+
     config = cfg.load_config()
     if not runner.detect_connected_device(config, verbose=False):
         return jsonify({"error": "No device connected. "
@@ -841,9 +857,9 @@ def api_run_tests():
     if not test_file.exists():
         return jsonify({"error": f"Test file not found: {test_file}"}), 404
 
-    with _test_lock:
-        if test_run_status["running"]:
-            return jsonify({"error": "Tests are already running"}), 409
+    with _run_lock:
+        if _busy():
+            return jsonify({"error": "A run is already in progress"}), 409
         test_run_status["running"] = True
         test_run_status["progress"] = 0
         test_run_status["logs"] = []
@@ -858,8 +874,14 @@ def api_run_tests():
 
 @app.route('/api/tests/status')
 def api_test_status():
-    """Get current test run status."""
-    return jsonify(test_run_status)
+    """Get current test run status: the worker appends to `logs` as we read."""
+    return jsonify({
+        "running": test_run_status["running"],
+        "progress": test_run_status["progress"],
+        "logs": list(test_run_status["logs"]),
+        "results": dict(test_run_status["results"]),
+        "failed_tests": list(test_run_status["failed_tests"]),
+    })
 
 
 def start_web_ui(host='127.0.0.1', port=8080, debug=False):
