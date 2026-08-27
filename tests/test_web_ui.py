@@ -253,6 +253,13 @@ def test_an_unresolvable_user_in_a_tilde_path_is_a_400(client, home):
     assert client.get("/api/browse/desktop?path=~nosuchuser1234/x").status_code == 400
 
 
+def test_add_rule_rejects_a_non_string_profile(client, home):
+    resp = client.post("/api/rules", headers=SAME_ORIGIN, json={
+        "profile": {"a": 1}, "mode": "copy",
+        "phone_path": "/DCIM", "desktop_path": str(home / "Pictures")})
+    assert resp.status_code == 400
+
+
 def test_add_rule_outside_allowed_roots_is_refused(client, home):
     _seed_profiles("pixel")
     resp = client.post("/api/rules", headers=SAME_ORIGIN, json={
@@ -328,6 +335,18 @@ def test_phone_bookmarks_are_normalised_and_deletable(client):
 
     assert client.delete("/api/bookmarks/phone/0", headers=SAME_ORIGIN).status_code == 200
     assert web_ui.bookmarks["phone"] == []
+
+
+def test_desktop_bookmark_rejects_a_non_string_path(client, home):
+    resp = client.post("/api/bookmarks/desktop", headers=SAME_ORIGIN,
+                       json={"name": "pics", "path": {"a": 1}})
+    assert resp.status_code == 400
+
+
+def test_phone_bookmark_rejects_a_non_string_name(client):
+    resp = client.post("/api/bookmarks/phone", headers=SAME_ORIGIN,
+                       json={"name": {"a": 1}, "path": "/DCIM"})
+    assert resp.status_code == 400
 
 
 def test_deleting_an_unknown_bookmark_is_404(client):
@@ -590,6 +609,52 @@ def test_indentation_survives_glyph_stripping(client, monkeypatch):
 
 
 # --------------------------------------------------------------------------
+# fix round 2: \r-animated spinner frames never reach the browser (or
+# history.json) as one giant line; every direct logs.append also scrubs
+# --------------------------------------------------------------------------
+
+def test_streaming_output_collapses_carriage_returns_to_the_last_frame():
+    """A spinner overwrites its line with \\r; only the final frame should
+    survive as a single log line."""
+    lines = []
+    web_ui.StreamingOutput(lines).write("\r| a\r/ a\r- a\n")
+    assert lines == ["- a"]
+
+
+def test_test_worker_scrubs_subprocess_output(monkeypatch, tmp_path):
+    """_test_worker used to append raw subprocess lines, bypassing the
+    ANSI/private-use scrubbing StreamingOutput gives /api/run."""
+    class FakeStdout:
+        def __init__(self, lines):
+            self._lines = iter(lines)
+
+        def readline(self):
+            return next(self._lines, '')
+
+    class FakeProcess:
+        def __init__(self, lines):
+            self.stdout = FakeStdout(lines)
+            self.returncode = 0
+
+        def wait(self):
+            pass
+
+    line = "\ue000 PASSED test_x \U0001F600\n"
+    monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: FakeProcess([line]))
+    monkeypatch.setitem(web_ui.test_run_status, "logs", [])
+    monkeypatch.setitem(web_ui.test_run_status, "results",
+                        {"passed": 0, "failed": 0, "skipped": 0})
+    monkeypatch.setitem(web_ui.test_run_status, "failed_tests", [])
+
+    web_ui._test_worker(tmp_path / "dummy_test.py", tmp_path)
+
+    logs = web_ui.test_run_status["logs"]
+    assert "\ue000" not in "\n".join(logs)
+    assert any("PASSED test_x" in entry and "\U0001F600" in entry for entry in logs)
+    assert web_ui.test_run_status["results"]["passed"] == 1
+
+
+# --------------------------------------------------------------------------
 # fix round 1: minors
 # --------------------------------------------------------------------------
 
@@ -722,6 +787,18 @@ def test_create_profile_needs_a_name_and_device(client):
     assert client.post("/api/profiles", json={}, headers=SAME_ORIGIN).status_code == 400
 
 
+def test_create_profile_rejects_a_non_string_name(client):
+    resp = client.post("/api/profiles", json={"name": {"a": 1}, "device_id": "SER1"},
+                       headers=SAME_ORIGIN)
+    assert resp.status_code == 400
+
+
+def test_create_profile_rejects_a_non_string_device_id(client):
+    resp = client.post("/api/profiles", json={"name": "pixel", "device_id": {"a": 1}},
+                       headers=SAME_ORIGIN)
+    assert resp.status_code == 400
+
+
 def test_create_duplicate_profile_is_409(client, monkeypatch):
     mounts, fingerprint = _one_device()
     monkeypatch.setattr(device, "enumerate_mtp_mounts", mounts)
@@ -756,6 +833,12 @@ def test_rename_profile_carries_backup_resume_state(client):
 
     assert resp.status_code == 200
     assert state.has_resume_state("new:r-0001")
+
+
+def test_rename_profile_rejects_a_non_string_name(client):
+    _seed_profiles("old")
+    resp = client.put("/api/profiles/old", json={"name": {"a": 1}}, headers=SAME_ORIGIN)
+    assert resp.status_code == 400
 
 
 def test_rename_unknown_profile_is_404(client):
@@ -969,6 +1052,47 @@ def test_dashboard_js_escapes_the_selected_rule_ids():
     proc = subprocess.run([node, "-e", harness], capture_output=True, text=True)
     assert proc.returncode == 0, proc.stderr
     assert proc.stdout == "ok"
+
+
+def test_dashboard_js_command_preview_is_valid_cli_argv():
+    """The CLI has no --dry-run flag (bare --run previews; -y executes) and no
+    --rename-duplicates flag (that option is web-only); the previewed command
+    must be one the CLI parser actually accepts."""
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not on PATH; cannot exercise dashboard.js")
+
+    harness = f"""
+        const fs = require('fs');
+        {DASHBOARD_DOM_STUB}
+        eval(fs.readFileSync({str(JS_DIR / 'main.js')!r}, 'utf8'));
+        eval(fs.readFileSync({str(JS_DIR / 'dashboard.js')!r}, 'utf8'));
+
+        function commandArgv(html) {{
+            const m = html.match(/<div class="command-line">([\\s\\S]*?)<\\/div>/);
+            if (!m) throw new Error('no command-line in preview');
+            const text = m[1].replace(/<[^>]+>/g, ' ');
+            return text.trim().split(/\\s+/);
+        }}
+
+        const auto = commandArgv(buildCommandPreview(true));
+        const manual = commandArgv(buildCommandPreview(false, ['r-0001', 'r-0002']));
+        process.stdout.write(JSON.stringify({{auto, manual}}));
+    """
+    proc = subprocess.run([node, "-e", harness], capture_output=True, text=True)
+    assert proc.returncode == 0, proc.stderr
+    argvs = json.loads(proc.stdout)
+
+    import main
+
+    for argv in argvs.values():
+        assert argv[:2] == ["$", "phone-sync"], argv
+        assert "--dry-run" not in argv
+        assert "--rename-duplicates" not in argv
+        main.build_parser().parse_args(argv[2:])  # must not raise SystemExit
+
+    assert argvs["manual"].count("-r") == 2, argvs["manual"]
+    assert "r-0001" in argvs["manual"] and "r-0002" in argvs["manual"]
 
 
 def test_the_docs_page_matches_what_the_code_does():

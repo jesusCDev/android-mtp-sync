@@ -55,6 +55,13 @@ ALLOWED_HOSTS = {"localhost", "127.0.0.1", "[::1]"}
 _ANSI = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
 _PRIVATE_USE = re.compile(r'[\ue000-\uf8ff\U000f0000-\U000ffffd]\s*')
 
+
+def _scrub(line: str) -> str:
+    """A printed line, collapsed to its last \\r-overwritten frame and
+    stripped of ANSI escapes and private-use glyphs, for the browser and
+    history.json alike."""
+    return _PRIVATE_USE.sub("", _ANSI.sub("", line.rsplit("\r", 1)[-1])).rstrip()
+
 # Global run state. `result` is the RunResult of the last finished run.
 current_run_status = {
     "running": False,
@@ -127,6 +134,13 @@ def _safe_desktop_path(raw_path: str) -> Path:
     raise PermissionError(f"Path is outside the allowed directories: {resolved}")
 
 
+def _text(value) -> str:
+    """A request field as a stripped string, or "" for anything non-string
+    (a JSON object/number/etc.) so it falls through to the existing
+    "required" 400s instead of raising in .strip()."""
+    return value.strip() if isinstance(value, str) else ""
+
+
 def _resolve_desktop_path(raw_path: str):
     """Return (path, None), or (None, error_response) for a refused path."""
     try:
@@ -144,14 +158,18 @@ class StreamingOutput(io.TextIOBase):
     def __init__(self, lines):
         self._lines = lines
         self._buffer = ""
+        # ponytail: one lock per instance - the spinner thread and the runner
+        # thread both write here; upgrade to per-line ordering if that ever matters.
+        self._lock = threading.Lock()
 
     def write(self, text: str) -> int:
-        self._buffer += text
-        while "\n" in self._buffer:
-            line, self._buffer = self._buffer.split("\n", 1)
-            line = _PRIVATE_USE.sub("", _ANSI.sub("", line)).rstrip()
-            if line.strip():
-                self._lines.append(line)
+        with self._lock:
+            self._buffer += text
+            while "\n" in self._buffer:
+                line, self._buffer = self._buffer.split("\n", 1)
+                line = _scrub(line)
+                if line.strip():
+                    self._lines.append(line)
         return len(text)
 
 
@@ -314,8 +332,8 @@ def api_profiles():
     """Get all profiles or create a new profile."""
     if request.method == 'POST':
         data = request.get_json(silent=True) or {}
-        profile_name = (data.get("name") or "").strip()
-        device_id = (data.get("device_id") or "").strip()
+        profile_name = _text(data.get("name"))
+        device_id = _text(data.get("device_id"))
 
         if not profile_name or not device_id:
             return jsonify({"error": "Profile name and device_id are required"}), 400
@@ -388,7 +406,7 @@ def api_add_rule():
     data = request.get_json(silent=True) or {}
     config = cfg.load_config()
 
-    profile_name = data.get("profile")
+    profile_name = _text(data.get("profile"))
     mode = data.get("mode")
     phone_path = data.get("phone_path")
     desktop_path = data.get("desktop_path")
@@ -460,7 +478,7 @@ def _run_worker(dry_run, rule_ids, notify, include_manual, rename_duplicates):
     except Exception as e:                      # a broken run must still report
         failure = e
         current_run_status["result"] = None
-        logs.append(f"{Icons.FAIL} Error: {e}")
+        logs.append(_scrub(f"{Icons.FAIL} Error: {e}"))
     finally:
         # Clear `running` first: a failure below must not wedge every later run
         # behind a permanent 409.
@@ -555,7 +573,7 @@ def api_device_unregistered():
 def api_rename_profile(profile_name):
     """Rename a profile."""
     data = request.get_json(silent=True) or {}
-    new_name = (data.get("name") or "").strip()
+    new_name = _text(data.get("name"))
 
     if not new_name:
         return jsonify({"error": "A profile name is required"}), 400
@@ -738,8 +756,8 @@ def api_add_bookmark(bookmark_type):
         return jsonify({"error": "Invalid bookmark type. Use 'desktop' or 'phone'"}), 400
 
     data = request.get_json(silent=True) or {}
-    name = (data.get('name') or '').strip()
-    path = (data.get('path') or '').strip()
+    name = _text(data.get('name'))
+    path = _text(data.get('path'))
 
     if not name or not path:
         return jsonify({"error": "Name and path are required"}), 400
@@ -796,10 +814,10 @@ test_run_status = {
 
 def _test_worker(test_file, project_root):
     """Stream the edge-case suite's output into test_run_status."""
-    logs = test_run_status["logs"]
+    out = StreamingOutput(test_run_status["logs"])
     try:
-        logs.append("Starting edge case test suite...")
-        logs.append(f"Test file: {test_file}")
+        out.write("Starting edge case test suite...\n")
+        out.write(f"Test file: {test_file}\n")
 
         process = subprocess.Popen(
             [sys.executable, str(test_file)],
@@ -811,28 +829,28 @@ def _test_worker(test_file, project_root):
         )
 
         for line in iter(process.stdout.readline, ''):
-            line = line.rstrip()
-            if not line:
+            stripped = line.rstrip()
+            if not stripped:
                 continue
-            logs.append(line)
-            if "PASSED" in line:
+            out.write(stripped + "\n")
+            if "PASSED" in stripped:
                 test_run_status["results"]["passed"] += 1
-            elif "FAILED" in line:
+            elif "FAILED" in stripped:
                 test_run_status["results"]["failed"] += 1
-                if "TEST" in line:
-                    test_run_status["failed_tests"].append(line)
-            elif "SKIPPED" in line:
+                if "TEST" in stripped:
+                    test_run_status["failed_tests"].append(stripped)
+            elif "SKIPPED" in stripped:
                 test_run_status["results"]["skipped"] += 1
 
         process.wait()
-        logs.append("-" * 70)
+        out.write("-" * 70 + "\n")
         if process.returncode == 0:
-            logs.append(f"{Icons.OK} All tests completed successfully")
+            out.write(f"{Icons.OK} All tests completed successfully\n")
         else:
-            logs.append(f"{Icons.WARN} Tests completed with exit code "
-                        f"{process.returncode}")
+            out.write(f"{Icons.WARN} Tests completed with exit code "
+                      f"{process.returncode}\n")
     except Exception as e:
-        logs.append(f"{Icons.FAIL} Error: {e}")
+        out.write(f"{Icons.FAIL} Error: {e}\n")
     finally:
         with _run_lock:
             test_run_status["running"] = False

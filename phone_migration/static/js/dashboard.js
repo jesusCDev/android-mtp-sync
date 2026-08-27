@@ -288,33 +288,31 @@ let deviceStatus = null;
     function buildCommandPreview(isDryRun, selectedRules = []) {
         let html = '<div class="command-preview">';
         
-        // Build command parts
+        // Build command parts. Bare `--run` previews (dry-run is the CLI
+        // default); `-y` executes. `--dry-run` and `--rename-duplicates` are
+        // not real CLI flags - the latter is web-only.
         const parts = ['phone-sync', '--run'];
-        if (isDryRun) {
-            parts.push('--dry-run');
-        } else {
+        if (!isDryRun) {
             parts.push('-y');
         }
-        
+
         if (options.notify) {
             parts.push('--notify');
         }
-        
-        if (options.rename_duplicates) {
-            parts.push('--rename-duplicates');
-        }
-        
+
+        selectedRules.forEach(id => {
+            parts.push('-r', escapeHtml(id));
+        });
+
         // Add to HTML
         html += '<div class="command-line">';
         html += `<span class="command-prompt">$</span>`;
         html += '<span class="command-text">';
-        
+
         for (let i = 0; i < parts.length; i++) {
             if (i > 0) html += ' ';
-            
-            if (parts[i] === '--dry-run') {
-                html += `<span class="command-dry-run">${parts[i]}</span>`;
-            } else if (parts[i].startsWith('-')) {
+
+            if (parts[i].startsWith('-')) {
                 html += `<span class="command-flag">${parts[i]}</span>`;
             } else if (i === 0 || parts[i - 1].startsWith('-')) {
                 html += `<span class="command-text">${parts[i]}</span>`;

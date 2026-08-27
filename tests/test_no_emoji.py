@@ -53,6 +53,9 @@ def _is_disallowed_glyph(ch: str) -> bool:
         return True
     if 0x1F000 <= cp <= 0x1FFFF:             # modern emoji / pictograph blocks
         return True
+    if 0xE000 <= cp <= 0xF8FF or 0xF0000 <= cp <= 0xFFFFD:
+        return True                           # private use (Nerd Font glyphs);
+                                               # east-Asian width reports 'A', not W/F
     return unicodedata.east_asian_width(ch) in ("W", "F")
 
 
@@ -64,3 +67,13 @@ def test_no_emoji_variation_selectors_or_wide_glyphs(path):
             f"{path.name} contains {ch!r} (U+{ord(ch):04X}); "
             "use phone_migration.theme.Icons instead of a literal glyph"
         )
+
+
+def test_a_private_use_glyph_is_flagged(tmp_path):
+    """unicodedata reports these codepoints as east-Asian width 'A'
+    (ambiguous), not wide - _is_disallowed_glyph needs its own check."""
+    path = tmp_path / "glyph.py"
+    path.write_text("x = 1  # \n", encoding="utf-8")
+
+    flagged = [ch for ch in path.read_text(encoding="utf-8") if _is_disallowed_glyph(ch)]
+    assert flagged == [""]

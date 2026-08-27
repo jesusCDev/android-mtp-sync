@@ -83,34 +83,37 @@ when `NO_COLOR` is set or stdout is not a TTY, so no output path needs to check.
 ## Icons
 
 Two sets. Nerd Font codepoints are from the Font Awesome range, stable across
-Nerd Fonts v2 and v3; the plain column is a single-width unicode fallback.
+Nerd Fonts v2 and v3; the plain column is a single-width unicode fallback. The
+Nerd glyphs are private-use codepoints - tofu in anything but a Nerd Font, so
+they are not reproduced here; look one up by its codepoint instead.
 
-| Name | Nerd | Codepoint | Plain | Used for |
-|---|---|---|---|---|
-| `OK` | `` | `U+F00C` | `✓` | Success confirmations |
-| `FAIL` | `` | `U+F00D` | `✗` | Errors, failures |
-| `WARN` | `` | `U+F071` | `⚠` | Warnings, refusals |
-| `INFO` | `` | `U+F05A` | `▸` | Informational notes |
-| `BULLET` | `` | `U+F111` | `•` | List items |
-| `ARROW` | `` | `U+F061` | `→` | Source to destination |
-| `PHONE` | `` | `U+F10B` | `▪` | Device lines, headers |
-| `FOLDER` | `` | `U+F07B` | `▸` | Directories |
-| `FILE` | `` | `U+F15B` | `•` | Files |
-| `MOVE` | `` | `U+F093` | `↑` | Move rules |
-| `COPY` | `` | `U+F0C5` | `+` | Copy and backup rules |
-| `SYNC` | `` | `U+F0EC` | `⇄` | Sync rules |
-| `DELETE` | `` | `U+F1F8` | `✗` | Deletions |
-| `SKIP` | `` | `U+F05E` | `-` | Skipped files |
-| `RENAME` | `` | `U+F040` | `~` | Renamed duplicates |
-| `BOLT` | `` | `U+F0E7` | `!` | Dry-run banner, web UI |
-| `SEARCH` | `` | `U+F002` | `?` | Scanning, in progress |
-| `STATS` | `` | `U+F080` | `#` | Summary blocks |
+| Name | Codepoint | Plain | Used for |
+|---|---|---|---|
+| `OK` | `U+F00C` | `✓` | Success confirmations |
+| `FAIL` | `U+F00D` | `✗` | Errors, failures |
+| `WARN` | `U+F071` | `⚠` | Warnings, refusals |
+| `INFO` | `U+F05A` | `▸` | Informational notes |
+| `BULLET` | `U+F111` | `•` | List items |
+| `ARROW` | `U+F061` | `→` | Source to destination |
+| `PHONE` | `U+F10B` | `▪` | Device lines, headers |
+| `FOLDER` | `U+F07B` | `▸` | Directories |
+| `FILE` | `U+F15B` | `•` | Files |
+| `MOVE` | `U+F093` | `↑` | Move rules |
+| `COPY` | `U+F0C5` | `+` | Copy and backup rules |
+| `SYNC` | `U+F0EC` | `⇄` | Sync rules |
+| `DELETE` | `U+F1F8` | `✗` | Deletions |
+| `SKIP` | `U+F05E` | `-` | Skipped files |
+| `RENAME` | `U+F040` | `~` | Renamed duplicates |
+| `BOLT` | `U+F0E7` | `!` | Dry-run banner, web UI |
+| `SEARCH` | `U+F002` | `?` | Scanning, in progress |
+| `STATS` | `U+F080` | `#` | Summary blocks |
 
 No emoji, anywhere. Emoji are double-width, carry invisible variation selectors
 that break column alignment, and render inconsistently across terminals.
 `tests/test_no_emoji.py` scans every module under `phone_migration/`, `scripts/`
-and `main.py` and fails if one reappears; `tests/test_theme.py` separately
-asserts that every glyph in both icon sets is single-width and not an emoji.
+and `main.py`, plus the web UI's `static/js`, `static/css` and `web_templates`,
+and fails if one reappears; `tests/test_theme.py` separately asserts that every
+glyph in both icon sets is single-width and not an emoji.
 
 Numbered steps in help text use plain `1.` `2.` `3.`, never circled digits.
 
