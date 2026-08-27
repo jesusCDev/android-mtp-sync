@@ -17,33 +17,33 @@ Branch: `fix/review-findings-v2`, cut from upstream `main` 4a98196; first commit
 
 Files: `phone_migration/theme.py`, `pyproject.toml`, `tests/conftest.py`, `tests/test_theme.py`, `scripts/color_demo.py` (all taken from v1 — the final v1 versions, i.e. including the fix-wave `requires-python` table), `phone_migration/{dry_run_analyzer,preflight,progress,rule_validator}.py` (ANSI/emoji → theme), `tests/test_operations.py` (drift fixes only), `tests/test_dry_run_safety.py` (one message-drift fix).
 
-- [ ] Copy the five v1 files. `tests/conftest.py`'s fixture must also cover `web_ui.HISTORY_FILE`/bookmarks paths if they exist upstream (check `web_ui.py` for module-level file paths; patch them too, import-guarded).
-- [ ] `dry_run_analyzer.py:215` `from .operations import Colors` → `from .theme import Colors`. Replace every raw ANSI literal and emoji in the four upstream modules with `theme.Colors`/`theme.Icons` names (no other module may define ANSI literals). `tests/test_theme.py`'s scan then covers them.
-- [ ] `tests/test_operations.py`: the same three drift fixes as v1 Task 1 (patch target, delete the sync rename test, `total_files` in the mock; also `failed: {}`). `tests/test_dry_run_safety.py::test_mass_deletion_warning`: align the expected message with the current analyzer text (test-only change).
-- [ ] Verify: suite fully green; `python3 scripts/color_demo.py` runs; no emoji left in `phone_migration/*.py` (the v1 `tests/test_web_ui.py` sweep is not in yet — add a small `tests/test_no_emoji.py` that scans `phone_migration/**/*.py`, `main.py`, `scripts/` for emoji/variation selectors/wide glyphs now; Task 7 extends it to JS/HTML).
+- [x] Copy the five v1 files. `tests/conftest.py`'s fixture must also cover `web_ui.HISTORY_FILE`/bookmarks paths if they exist upstream (check `web_ui.py` for module-level file paths; patch them too, import-guarded).
+- [x] `dry_run_analyzer.py:215` `from .operations import Colors` → `from .theme import Colors`. Replace every raw ANSI literal and emoji in the four upstream modules with `theme.Colors`/`theme.Icons` names (no other module may define ANSI literals). `tests/test_theme.py`'s scan then covers them.
+- [x] `tests/test_operations.py`: the same three drift fixes as v1 Task 1 (patch target, delete the sync rename test, `total_files` in the mock; also `failed: {}`). `tests/test_dry_run_safety.py::test_mass_deletion_warning`: align the expected message with the current analyzer text (test-only change).
+- [x] Verify: suite fully green; `python3 scripts/color_demo.py` runs; no emoji left in `phone_migration/*.py` (the v1 `tests/test_web_ui.py` sweep is not in yet — add a small `tests/test_no_emoji.py` that scans `phone_migration/**/*.py`, `main.py`, `scripts/` for emoji/variation selectors/wide glyphs now; Task 7 extends it to JS/HTML).
 
 ## Task 2: gio_utils + paths
 
 Files: `phone_migration/gio_utils.py`, `phone_migration/paths.py`, `tests/test_gio_utils.py`, `tests/test_paths.py`, call-site kwarg edits in `operations.py`/`browser.py`/`runner.py`/`rule_validator.py` only.
 
-- [ ] Apply the v1 `gio_utils` design (`GioError`, `GIO`, timeouts, `child_uri`, `gio_list` raises, `gio_list_detailed`, `gio_info` `{}`-only-when-absent, `is_dir`, `gio_copy` without `overwrite`, `gio_mkdir` idempotent and timeout-safe, `gio_mount`) **on top of** upstream's file: keep `FailureInjector` (test-only hook) and keep an optional `timeout` override on `gio_info` (`rule_validator.py:76` passes `timeout=1`); route it through the shared `run()`.
-- [ ] `paths.py` is byte-identical to the v1 base → take v1's file verbatim.
-- [ ] Tests: v1's `test_gio_utils.py`/`test_paths.py`, plus one test that `FailureInjector` still works and one that `gio_info(uri, timeout=1)` is accepted.
+- [x] Apply the v1 `gio_utils` design (`GioError`, `GIO`, timeouts, `child_uri`, `gio_list` raises, `gio_list_detailed`, `gio_info` `{}`-only-when-absent, `is_dir`, `gio_copy` without `overwrite`, `gio_mkdir` idempotent and timeout-safe, `gio_mount`) **on top of** upstream's file: keep `FailureInjector` (test-only hook) and keep an optional `timeout` override on `gio_info` (`rule_validator.py:76` passes `timeout=1`); route it through the shared `run()`.
+- [x] `paths.py` is byte-identical to the v1 base → take v1's file verbatim.
+- [x] Tests: v1's `test_gio_utils.py`/`test_paths.py`, plus one test that `FailureInjector` still works and one that `gio_info(uri, timeout=1)` is accepted.
 
 ## Task 3: state + config
 
 Files: `phone_migration/state.py`, `phone_migration/config.py`, `tests/test_state.py`, `tests/test_config.py`, `runner.py:~123` debug-hint line only.
 
-- [ ] `state.py`: v1 design (`state_key`, `failed: dict`, corrupt → `.corrupt`, atomic tmp+fsync+`os.replace`, `rename_profile`) **inside upstream's fcntl `_acquire_lock()`** — do not drop the lock. Keep `mark_file_copied`/`mark_file_failed` as deprecated wrappers until Task 4 (as v1 did).
-- [ ] `config.py` byte-identical to v1 base → v1 file verbatim (XDG + migration, atomic write, `setdefault`, no `overwrite` key, theme colors, XDG `or` fix).
-- [ ] Tests from v1 plus: two processes/threads saving state concurrently do not corrupt (exercise the lock path once).
+- [x] `state.py`: v1 design (`state_key`, `failed: dict`, corrupt → `.corrupt`, atomic tmp+fsync+`os.replace`, `rename_profile`) **inside upstream's fcntl `_acquire_lock()`** — do not drop the lock. Keep `mark_file_copied`/`mark_file_failed` as deprecated wrappers until Task 4 (as v1 did).
+- [x] `config.py` byte-identical to v1 base → v1 file verbatim (XDG + migration, atomic write, `setdefault`, no `overwrite` key, theme colors, XDG `or` fix).
+- [x] Tests from v1 plus: two processes/threads saving state concurrently do not corrupt (exercise the lock path once).
 
 ## Task 4: operations.py
 
 Files: `phone_migration/operations.py`, `tests/test_operations.py` (replace with v1's), `tests/fake_gio.py` (v1), `phone_migration/state.py` (delete wrappers last).
 
-- [ ] Port v1's rewrite (all P0/P2 fixes, `files` list, `profile_name`, batched state, sync guards incl. storage-root/incomplete-scan/`OSError`, `run_smart_copy_rule` alias, sync without `rename_duplicates`) onto upstream's `operations.py`, preserving upstream's symlink-loop guard in sync and any hooks into `progress.py` (see port-map-core §2). Delete the state wrappers.
-- [ ] `dry_run_analyzer` consumes `(rule, stats)` tuples with `stats.get(...)` — confirm the new stats keys are a superset; add a test in `tests/test_dry_run_safety.py` style that feeds a real `run_move_rule` stats dict into `analyze_dry_run_results` without error.
+- [x] Port v1's rewrite (all P0/P2 fixes, `files` list, `profile_name`, batched state, sync guards incl. storage-root/incomplete-scan/`OSError`, `run_smart_copy_rule` alias, sync without `rename_duplicates`) onto upstream's `operations.py`, preserving upstream's symlink-loop guard in sync and any hooks into `progress.py` (see port-map-core §2). Delete the state wrappers.
+- [x] `dry_run_analyzer` consumes `(rule, stats)` tuples with `stats.get(...)` — confirm the new stats keys are a superset; add a test in `tests/test_dry_run_safety.py` style that feeds a real `run_move_rule` stats dict into `analyze_dry_run_results` without error.
 
 ## Task 5: device + browser + notifications
 
