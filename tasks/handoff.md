@@ -12,9 +12,9 @@ Review-fix series for phone-migration: COMPLETE and merged into `main` (b061deb,
 None.
 
 ## REMAINING (user-only items)
-1. `git push` if desired (not done — never asked).
-2. Delete untracked `COLOR_REFERENCE.txt` and `phone_migration/resources/` (junk; content merged into docs/DESIGN_SYSTEM.md). Optional: `tests/res/icons/*.png` (16 MB, unreferenced) and branch `fix/review-findings`.
-3. Consider: history of `tests/videos/` (153 MB) is still in git history; only a history rewrite removes it from the remote.
+1. DONE: pushed (and force-pushed after the rewrite).
+2. DONE: junk deleted, v1 branch deleted, tests/res/icons PNGs removed (73aa2b1). Still tracked: 9 PNGs under tests/res/archive/ (not requested).
+3. DONE 2026-08-26 22:45: history rewritten with git-filter-repo to purge tests/videos, force-pushed; pre-rewrite bundle kept at .superpowers/pre-rewrite-*.bundle (gitignored). Any other clone must re-clone.
 4. Deferred minors are listed in the ledger (all triaged "leave").
 
 ## STATE
