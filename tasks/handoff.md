@@ -4,6 +4,7 @@
 Review-fix series for phone-migration: COMPLETE and merged into `main` (b061deb, 108 commits on main). Nothing in flight.
 
 ## DONE
+- 2026-08-27: `--web` opens a browser tab once the server answers (`--no-browser` to suppress); `--run` exits 2 when no device is connected, 1 when any rule errored. Deferred review minors carried into docs/TODO.md; `.superpowers/` scratch and bundles deleted; `tests/res/` purged from history.
 - v1 fix series (branch `fix/review-findings`, reference only, 21 commits) — superseded by the port; kept until the user deletes it.
 - Port onto upstream main (`fix/review-findings-v2`, 21 commits: tasks 1-8 + final fix waves + xreview fixes) — merged fast-forward into `main`; branch deleted. `python3 -m pytest -q -W error` → 469 passed on `main`.
 - Ledgers: `tasks/reviews.md` (both xreview sections, every box checked), `tasks/port-plan.md` (all items ticked), `.superpowers/sdd/port-plan/progress.md` (every ruling; gitignored).
