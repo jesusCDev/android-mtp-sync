@@ -14,3 +14,7 @@ reviewer: gpt-5.6-terra · 86 files changed, 10882 insertions(+), 5332 deletions
   - dismissed: verified on this machine — `/usr/bin/gio copy file://src file://dst` over an existing `dst` returns 0 and replaces the content without `--overwrite` (gio 2.88); `tests/test_gio_utils.py::test_gio_copy_overwrites_without_leaving_a_backup` pins it. The old `--backup=none` flag was the actual bug (parsed as `-b`, left `file~` copies) and is gone.
 - [x] phone_migration/operations.py:287 — Empty-directory cleanup increments the move `deleted` counter, making nested move dry-runs report more deletions than copies and trigger the safety analyzer’s blocker — track directory removals separately or exclude them from the file-deletion counter.
   - fixed in 7aea3ea: directory removals now count in `folders_removed` and record action `folder`; `deleted` counts files only (tests: nested real move deleted==1/folders_removed==1; analyzer sees no blocker).
+
+## 2026-08-27 00:20 — --web opens a browser tab; --run exits 2 with no device
+reviewer: gpt-5.6-terra · 3 files changed, 128 insertions(+), 8 deletions(-)
+- [x] no findings
