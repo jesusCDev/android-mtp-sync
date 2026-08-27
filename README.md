@@ -257,8 +257,10 @@ All three theme switches are read once, at start-up.
 
 Before each rule of a **real** (non-dry) run, the tool prints
 `Preflight: checking disk space for <mode>...` and estimates the transfer by
-walking the source tree, then compares it against the free space on the
-destination filesystem, requiring the transfer to fit with a 5% headroom left
+walking the rule's phone folder (a lower bound: the walk stops after 2000
+entries), then compares it against the free space on the destination
+filesystem — the nearest existing ancestor, since the destination itself is
+created moments later — requiring the transfer to fit with a 5% headroom left
 over. If it does not fit, that rule is **skipped** with a `Preflight check
 failed` message listing what is needed, what is free, and the deficit; the run
 continues with the remaining rules and the skipped rule counts as an error. A

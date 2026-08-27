@@ -284,3 +284,15 @@ def test_no_emoji_or_double_width_glyphs(path):
             if unicodedata.east_asian_width(ch) == "W" or ch == "\ufe0f" or "①" <= ch <= "⑳":
                 offenders.append(f"{path}:{lineno}: {ch!r}")
     assert offenders == []
+
+
+def test_run_exits_1_when_the_run_reported_errors(monkeypatch, no_config):
+    monkeypatch.setattr(runner, "run_for_connected_device",
+                        lambda config, **kw: {"stats": {"errors": 2}})
+    assert main.main(["--run"]) == 1
+
+
+def test_run_exits_0_when_the_run_reported_no_errors(monkeypatch, no_config):
+    monkeypatch.setattr(runner, "run_for_connected_device",
+                        lambda config, **kw: {"stats": {"errors": 0}})
+    assert main.main(["--run"]) == 0

@@ -194,3 +194,9 @@ def test_icons_are_single_width_and_never_emoji(monkeypatch, plain):
             assert len(glyph) == 1, f"Icons.{name} is not a single codepoint"
             width = unicodedata.east_asian_width(glyph)
             assert width not in ("W", "F"), f"Icons.{name} is double-width ({width})"
+
+
+def test_raw_ansi_escapes_live_only_in_the_theme():
+    offenders = [p.name for p in source_files()
+                 if p.name != "theme.py" and "\\033[" in p.read_text()]
+    assert not offenders, f"raw ANSI escapes outside theme.py: {offenders}"

@@ -432,7 +432,7 @@ def main(argv=None):
             return 0
 
         if args.run:
-            runner.run_for_connected_device(
+            result = runner.run_for_connected_device(
                 config,
                 verbose=args.verbose,
                 dry_run=not args.execute,      # dry-run unless -y
@@ -440,7 +440,9 @@ def main(argv=None):
                 notify=args.notify,
                 include_manual=manual_flag,
             )
-            return 0
+            # A skipped rule, a failed copy or an unknown mode all land in
+            # "errors"; scripts and the shell need to see that in $?.
+            return 1 if result.get("stats", {}).get("errors", 0) else 0
 
         if args.browse_phone:
             profile = runner.detect_connected_device(config, args.verbose)

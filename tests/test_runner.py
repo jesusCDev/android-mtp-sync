@@ -524,3 +524,21 @@ def test_notify_receives_the_result_stats(ops, connected, monkeypatch):
     result = runner.run_for_connected_device({}, notify=True)
 
     assert seen == [(result["stats"], False)]
+
+
+# The real check, captured before the autouse fixture swaps it out.
+_REAL_PREFLIGHT_COPY = preflight.preflight_copy
+
+
+def test_the_real_preflight_passes_a_rule_whose_desktop_dir_does_not_exist_yet(
+        ops, connected, monkeypatch, tmp_path):
+    """The operation creates the destination moments later; preflight must not skip it."""
+    monkeypatch.setattr(preflight, "preflight_copy", _REAL_PREFLIGHT_COPY)
+    monkeypatch.setattr(gio_utils, "gio_list_detailed", lambda uri: [])
+    dest = tmp_path / "Phone" / "Camera"  # deliberately not created
+    connected(_profile(_rule("r-1", "copy", desktop=str(dest))))
+
+    result = runner.run_for_connected_device({}, dry_run=False)
+
+    assert result["rules"][0]["error"] is None
+    assert result["stats"]["errors"] == 0

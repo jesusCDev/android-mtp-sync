@@ -403,7 +403,10 @@ def run_for_connected_device(config: Dict[str, Any], verbose: bool = False,
     _print_summary(result, transfer_summary)
 
     if dry_run:
-        rules_stats: List[Tuple[dict, dict]] = [(r, r["stats"]) for r in result["rules"]]
+        # A rule that errored has empty stats; the analyzer would read that as
+        # "this rule would transfer nothing", which is not what happened.
+        rules_stats: List[Tuple[dict, dict]] = [(r, r["stats"]) for r in result["rules"]
+                                                if r["error"] is None]
         if rules_stats:
             print(f"\n{Colors.SEPARATOR}{RULE}{Colors.RESET}")
             print(f"\n{Colors.BOLD}{Colors.HEADER}{Icons.SEARCH} "

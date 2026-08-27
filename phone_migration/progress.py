@@ -1,5 +1,9 @@
-"""
-Progress display utilities with animations and progress bars.
+"""Progress display utilities with animations and progress bars.
+
+Animation frames end in '\r' so the next one overwrites them, which only works
+on a terminal. Off a TTY - piped, redirected, or captured by the web UI's
+line-buffered stdout stand-in - every frame would instead pile up into one
+enormous line, so the animation collapses to a plain line at start and stop.
 """
 
 import sys
@@ -34,23 +38,27 @@ class Spinner:
             time.sleep(0.1)
     
     def start(self):
-        """Start the spinner."""
+        """Start the spinner (one plain line instead, off a TTY)."""
+        if not sys.stdout.isatty():
+            sys.stdout.write(f"{self.message}...\n")
+            sys.stdout.flush()
+            return
+
         self.running = True
         self.thread = threading.Thread(target=self._spin, daemon=True)
         self.thread.start()
     
     def stop(self, final_message: Optional[str] = None):
-        """Stop the spinner."""
+        """Stop the spinner and print the final message, if any."""
         self.running = False
-        if self.thread:
+        if self.thread is not None:
             self.thread.join()
-        
-        # Clear the line
-        sys.stdout.write('\r' + ' ' * (len(self.message) + 10) + '\r')
-        
+            # Erase the last frame; nothing was animated when there is no thread.
+            sys.stdout.write('\r' + ' ' * (len(self.message) + 10) + '\r')
+
         if final_message:
             sys.stdout.write(final_message + '\n')
-        
+
         sys.stdout.flush()
 
 
@@ -70,12 +78,19 @@ def print_progress_bar(current: int, total: int, prefix: str = '', suffix: str =
     """
     reset = Colors.RESET
     percent = f"{100 * (current / float(total)):.1f}" if total > 0 else "0.0"
+
+    if not sys.stdout.isatty():
+        # No bar off a TTY: the intermediate frames cannot be overwritten there.
+        if current >= total:
+            print(f'{prefix} {percent}% {suffix}'.strip())
+        return
+
     filled_length = int(length * current // total) if total > 0 else 0
     bar = fill * filled_length + '░' * (length - filled_length)
-    
+
     sys.stdout.write(f'\r{prefix} {color}|{bar}|{reset} {percent}% {suffix}')
     sys.stdout.flush()
-    
+
     if current >= total:
         print()  # New line when complete
 
@@ -102,8 +117,6 @@ class RuleProgress:
         self.mode = mode
         self.total_rules = total_rules
         self.current_rule = current_rule
-        self.files_processed = 0
-        self.folders_processed = 0
         self.start_time = time.time()
         self.spinner: Optional[Spinner] = None
     
@@ -112,28 +125,6 @@ class RuleProgress:
         msg = f"[{self.current_rule}/{self.total_rules}] {self.mode.upper()} ({self.rule_id})"
         self.spinner = Spinner(msg, color=Colors.INFO)
         self.spinner.start()
-    
-    def update(self, message: str):
-        """Update progress with a status message."""
-        if self.spinner:
-            self.spinner.message = f"[{self.current_rule}/{self.total_rules}] {self.mode.upper()} - {message}"
-    
-    def update_counts(self, files: int = 0, folders: int = 0):
-        """Update file and folder counts."""
-        self.files_processed += files
-        self.folders_processed += folders
-        
-        elapsed = time.time() - self.start_time
-        rate = self.files_processed / elapsed if elapsed > 0 else 0
-        
-        msg = f"[{self.current_rule}/{self.total_rules}] {self.mode.upper()} - {self.files_processed} files"
-        if self.folders_processed > 0:
-            msg += f", {self.folders_processed} folders"
-        if rate > 0.1:
-            msg += f" ({rate:.1f} files/s)"
-        
-        if self.spinner:
-            self.spinner.message = msg
     
     def stop(self, success: bool = True, summary: str = ""):
         """Stop the rule progress."""

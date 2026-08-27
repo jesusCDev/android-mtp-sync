@@ -11,9 +11,11 @@ files, so you can pick the right one before you pass `-y`.
 Two checks bracket a run, and neither is configurable:
 
 - **Preflight (real runs only).** Before each rule executes, the transfer size is
-  estimated by walking the source tree and compared against the free space on the
-  destination filesystem; the transfer must fit with 5% of the free space still
-  left over. If it does not, that rule is skipped with a `Preflight check failed`
+  estimated by walking the rule's phone folder — a lower bound, since the walk
+  stops after 2000 entries — and compared against the free space on the
+  destination filesystem, measured on the nearest existing ancestor because the
+  destination itself is created moments later; the transfer must fit with 5% of
+  the free space still left over. If it does not, that rule is skipped with a `Preflight check failed`
   message naming the deficit, and the run continues with the other rules. Sync is
   the exception: MTP does not report the phone's free space, so a sync rule's
   check is logged as skipped rather than enforced.

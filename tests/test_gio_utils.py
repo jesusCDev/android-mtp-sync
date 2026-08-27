@@ -288,3 +288,13 @@ def test_gio_info_without_a_timeout_uses_the_default(monkeypatch):
     monkeypatch.setattr(subprocess, "run", record)
     gio_utils.gio_info("mtp://phone/x")
     assert seen["timeout"] == gio_utils.TIMEOUT_SHORT
+
+
+def test_a_missing_gio_binary_is_a_gio_error(monkeypatch):
+    """Every caller guards against GioError; a bare FileNotFoundError escapes them all."""
+    monkeypatch.setattr(gio_utils, "GIO", "/nonexistent/bin/gio")
+
+    with pytest.raises(gio_utils.GioError, match="not found"):
+        gio_utils.gio_list("mtp://Pixel/")
+
+    gio_utils.gio_mount("mtp://Pixel/")  # best effort: must stay silent

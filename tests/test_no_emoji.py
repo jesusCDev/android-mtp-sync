@@ -4,9 +4,6 @@ phone_migration/theme.py is exempt: it is the one place glyphs are defined (and
 it has its own width/emoji checks in tests/test_theme.py). Every other module
 must reference Icons.X / Colors.X by name instead of a literal glyph.
 
-Files the port hasn't reached yet are allow-listed below (see tasks/port-plan.md
-for which task lands each one); delete an entry as its task migrates the file.
-
 The scan also covers the web UI's own sources - JS, CSS and templates. Font
 Awesome markup (<i class="fas fa-check">) is the icon system there; a literal
 emoji is not.
@@ -22,9 +19,6 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 # The single authorized source of literal glyphs; covered by test_theme.py instead.
 EXEMPT = {"phone_migration/theme.py"}
 
-# Not yet migrated off raw ANSI/emoji -- tracked in tasks/port-plan.md.
-NOT_YET_MIGRATED = set()
-
 
 def source_files():
     candidates = [
@@ -35,8 +29,7 @@ def source_files():
         *sorted(REPO_ROOT.glob("phone_migration/static/css/*.css")),
         *sorted(REPO_ROOT.glob("phone_migration/web_templates/*.html")),
     ]
-    skip = EXEMPT | NOT_YET_MIGRATED
-    return [p for p in candidates if p.relative_to(REPO_ROOT).as_posix() not in skip]
+    return [p for p in candidates if p.relative_to(REPO_ROOT).as_posix() not in EXEMPT]
 
 
 def test_source_files_are_found():

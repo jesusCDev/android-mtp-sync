@@ -104,12 +104,17 @@ def run(args: List[str], check: bool = True,
         CompletedProcess object
 
     Raises:
-        GioError: on timeout, or on a non-zero exit code when check is True
+        GioError: when gio is not installed, on timeout, or on a non-zero exit
+            code when check is True
     """
     try:
         result = subprocess.run(args, capture_output=True, text=True, timeout=timeout)
     except subprocess.TimeoutExpired:
         raise GioError(f"timeout after {timeout}s: {' '.join(args[:3])}") from None
+    except FileNotFoundError:
+        # Every caller guards against GioError; a bare FileNotFoundError would
+        # escape them all, including gio_mount's best-effort contract.
+        raise GioError(f"{GIO} not found - install glib2/gvfs") from None
 
     if check and result.returncode != 0:
         raise _error(result)

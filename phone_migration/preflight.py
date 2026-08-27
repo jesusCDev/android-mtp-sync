@@ -11,6 +11,8 @@ from pathlib import Path
 from typing import Dict, Any, Tuple, Optional
 import logging
 
+from . import gio_utils, paths
+
 logger = logging.getLogger(__name__)
 
 
@@ -59,18 +61,77 @@ def estimate_transfer_size(source_path: str, rule_type: str = "copy") -> int:
     return total_bytes
 
 
+
+def estimate_phone_size(rule: Dict[str, Any], device: Dict[str, Any],
+                        max_entries: int = 2000) -> int:
+    """
+    Lower bound on the bytes a phone-to-desktop rule will pull down.
+
+    Walks the rule's phone directory with gio, summing file sizes. A subtree
+    that will not list is skipped rather than aborting the estimate, and a
+    phone that is unreachable estimates 0 (the check then always passes, which
+    is what the caller wants - a bad estimate must not block a real transfer).
+
+    # ponytail: a lower bound truncated at max_entries, not an exact total. An
+    # exhaustive walk of a large MTP tree costs minutes before a transfer that
+    # is itself minutes long. Raise the cap (or estimate per-entry averages) if
+    # runs start passing preflight and then running out of space.
+
+    Args:
+        rule: Rule dict with 'phone_path'
+        device: Device dict with 'activation_uri'
+        max_entries: Stop after inspecting this many directory entries
+
+    Returns:
+        Total bytes of the files seen before the cap was reached
+    """
+    root = paths.build_phone_uri(device.get("activation_uri", ""),
+                                 rule.get("phone_path", ""))
+    total_bytes = 0
+    seen = 0
+    stack = [root]
+
+    while stack and seen < max_entries:
+        uri = stack.pop()
+        try:
+            entries = gio_utils.gio_list_detailed(uri)
+        except gio_utils.GioError as e:
+            logger.warning(f"Could not list {uri} for the size estimate: {e}")
+            continue
+
+        for entry in entries:
+            seen += 1
+            if entry["is_dir"]:
+                stack.append(gio_utils.child_uri(uri, entry["name"]))
+            else:
+                total_bytes += entry.get("size") or 0
+            if seen >= max_entries:
+                logger.info(f"Size estimate truncated at {max_entries} entries")
+                break
+
+    return total_bytes
+
+
 def query_free_space_desktop(path: str) -> int:
     """
-    Query free space on desktop filesystem.
-    
+    Query free space on the desktop filesystem holding `path`.
+
+    The destination directory usually does not exist yet - the operation
+    creates it moments after this check - so the nearest existing ancestor is
+    measured instead. It is on the same filesystem in every case that matters.
+
     Args:
         path: Path on desktop filesystem
-    
+
     Returns:
         Free bytes available
     """
+    probe = Path(path).expanduser()
+    while not probe.exists() and probe != probe.parent:
+        probe = probe.parent
+
     try:
-        stat = shutil.disk_usage(path)
+        stat = shutil.disk_usage(probe)
         return stat.free
     except OSError as e:
         logger.error(f"Could not query free space for {path}: {e}")
@@ -146,7 +207,7 @@ def preflight_copy(rule: Dict[str, Any], device: Dict[str, Any]) -> None:
     desktop_path = os.path.expanduser(desktop_path)
     
     # For copy, we need space on desktop
-    total_bytes = estimate_transfer_size(device.get("phone_path", ""), "copy")
+    total_bytes = estimate_phone_size(rule, device)
     free_bytes = query_free_space_desktop(desktop_path)
     
     validate_space_or_abort(total_bytes, free_bytes, operation_name="Copy")
@@ -167,7 +228,7 @@ def preflight_move(rule: Dict[str, Any], device: Dict[str, Any]) -> None:
     desktop_path = os.path.expanduser(desktop_path)
     
     # For move, same as copy - we need space on desktop
-    total_bytes = estimate_transfer_size(device.get("phone_path", ""), "move")
+    total_bytes = estimate_phone_size(rule, device)
     free_bytes = query_free_space_desktop(desktop_path)
     
     validate_space_or_abort(total_bytes, free_bytes, operation_name="Move")
@@ -196,7 +257,7 @@ def preflight_sync(rule: Dict[str, Any], device: Dict[str, Any]) -> None:
         logger.warning(
             "Cannot determine phone free space. "
             "Skipping space check for sync. "
-            "Estimated transfer: {_format_bytes(total_bytes)}"
+            f"Estimated transfer: {_format_bytes(total_bytes)}"
         )
         return
     
@@ -218,7 +279,7 @@ def preflight_backup(rule: Dict[str, Any], device: Dict[str, Any]) -> None:
     desktop_path = os.path.expanduser(desktop_path)
     
     # For backup, we need space on desktop
-    total_bytes = estimate_transfer_size(device.get("phone_path", ""), "backup")
+    total_bytes = estimate_phone_size(rule, device)
     free_bytes = query_free_space_desktop(desktop_path)
     
     validate_space_or_abort(total_bytes, free_bytes, operation_name="Backup")
