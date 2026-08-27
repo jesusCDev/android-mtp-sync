@@ -6,7 +6,7 @@ Tests all anomaly detection scenarios to ensure safety checks work correctly.
 
 import pytest
 from fake_gio import FakePhone
-from phone_migration import dry_run_analyzer, operations
+from phone_migration import dry_run_analyzer, gio_utils, operations
 
 
 def test_normal_move_operation():
@@ -219,6 +219,22 @@ def test_analyzer_accepts_a_real_run_move_rule_stats_dict(tmp_path, monkeypatch)
     Feed a real `run_move_rule` result through unmodified and confirm the
     analyzer neither raises nor misreads it as unsafe."""
     FakePhone({"Internal storage/DCIM/a.jpg": b"hello"}).install(monkeypatch)
+    rule = {"id": "r-0001", "mode": "move", "phone_path": "/DCIM",
+            "desktop_path": str(tmp_path / "dest")}
+
+    stats = operations.run_move_rule(rule, {"activation_uri": "mtp://dev/"})
+    result = dry_run_analyzer.analyze_dry_run_results([(rule, stats)])
+
+    assert result.is_safe
+    assert not result.has_warnings
+
+
+def test_analyzer_accepts_dry_run_nested_move_stats(tmp_path, monkeypatch):
+    """A nested move's folder cleanup must not count toward `deleted` as a
+    file deletion - the analyzer's move-safety check compares `deleted`
+    against `copied` file-for-file, and a removed folder is not a file."""
+    FakePhone({"Internal storage/DCIM/sub/a.jpg": b"hello"}).install(monkeypatch)
+    monkeypatch.setattr(gio_utils, "DRY_RUN", True)
     rule = {"id": "r-0001", "mode": "move", "phone_path": "/DCIM",
             "desktop_path": str(tmp_path / "dest")}
 

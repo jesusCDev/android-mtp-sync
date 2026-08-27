@@ -119,7 +119,8 @@ def run_move_rule(rule: Dict[str, Any], device: Dict[str, Any], verbose: bool = 
     Only files whose desktop copy matches the source byte count are deleted;
     everything else stays on the phone and is counted as an error.
     """
-    stats = _new_stats("copied", "renamed", "deleted", "errors", "skipped", "folders")
+    stats = _new_stats("copied", "renamed", "deleted", "errors", "skipped", "folders",
+                       "folders_removed")
     phone_path = rule.get("phone_path", "")
 
     try:
@@ -300,8 +301,8 @@ def _cleanup_empty_dirs(dir_uri: str, rel_path: str, stats: Dict[str, Any],
         # ponytail: best effort - a directory the phone refuses to drop is not
         # an error, the files are already safely off it.
         if gio_utils.gio_remove(entry_uri, verbose=verbose):
-            stats["deleted"] += 1
-            _record(stats, "deleted", entry_rel)
+            stats["folders_removed"] += 1
+            _record(stats, "folder", entry_rel)
 
 
 def _print_pull_summary(stats: Dict[str, Any], label: str) -> None:
@@ -687,6 +688,7 @@ def _sync_desktop_to_phone(src_dir: Path, dest_uri: str, rel_path: str,
                 transfer_tracker.add_file(source_size)
         else:
             _fail(stats, _display(entry), "copy to phone failed", entry_rel)
+            complete = False
 
     return complete
 

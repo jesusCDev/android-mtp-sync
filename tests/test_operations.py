@@ -208,6 +208,30 @@ def test_move_removes_emptied_subdirectories_but_keeps_the_root(tmp_path, monkey
     assert stats["errors"] == 1
 
 
+def test_move_of_a_nested_directory_counts_folder_removal_separately(tmp_path, monkeypatch):
+    """A subdir emptied by a move is removed too, but that removal must not
+    inflate `deleted` - dry_run_analyzer's move-safety check compares
+    `deleted` against `copied` file-for-file, and a folder is not a file."""
+    make_phone({f"{ROOT}/sub/a.jpg": b"a"}, monkeypatch)
+
+    stats = check_shape(operations.run_move_rule(make_rule(tmp_path, "move"), DEVICE))
+
+    assert stats["copied"] == 1
+    assert stats["deleted"] == 1
+    assert stats["folders_removed"] == 1
+    removed_folder = [f for f in entries(stats, "folder") if f["dst"] is None]
+    assert removed_folder == [{"action": "folder", "src": "sub", "dst": None, "error": None}]
+
+
+def test_dry_run_move_of_a_nested_directory_keeps_copied_and_deleted_equal(tmp_path, monkeypatch):
+    make_phone({f"{ROOT}/sub/a.jpg": b"a"}, monkeypatch)
+    monkeypatch.setattr(gio_utils, "DRY_RUN", True)
+
+    stats = check_shape(operations.run_move_rule(make_rule(tmp_path, "move"), DEVICE))
+
+    assert stats["copied"] == stats["deleted"]
+
+
 def test_move_never_deletes_when_a_listing_fails(tmp_path, monkeypatch):
     phone = make_phone({f"{ROOT}/a.jpg": b"x"}, monkeypatch)
     phone.list_errors.add(ROOT)
@@ -584,6 +608,26 @@ def test_sync_reports_a_failed_copy(tmp_path, monkeypatch):
     assert stats["errors"] == 1
     assert stats["copied"] == 0
     assert entries(stats, "failed")[0]["dst"] == "keep.mp3"
+
+
+def test_sync_refuses_to_delete_extraneous_after_a_failed_copy_to_phone(tmp_path, monkeypatch,
+                                                                        capsys):
+    """A copy failure during the desktop -> phone pass must mark the scan
+    incomplete - a flaky device must never be trusted for deletions in the
+    same run."""
+    phone = make_phone({"Internal storage/Music/extra.mp3": b"a"}, monkeypatch)
+    phone.copy_failures.add("keep.mp3")
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "keep.mp3").write_bytes(b"bb")
+
+    stats = check_shape(operations.run_sync_rule(
+        sync_rule(src, delete_extraneous=True), DEVICE))
+
+    assert phone.removed == []
+    assert phone.files["Internal storage/Music/extra.mp3"] == b"a"
+    assert stats["errors"] >= 1
+    assert "refus" in capsys.readouterr().out.lower()
 
 
 # --- an empty desktop_path aborts the rule, it never targets the CWD ---------
