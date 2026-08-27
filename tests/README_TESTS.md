@@ -1,333 +1,145 @@
-# Phone Migration Tool - Test Suite
+# Test Suite
 
-Comprehensive end-to-end testing framework for all migration operations.
+There are three separate things in this directory, and they are run in different
+ways.
 
-## Quick Start
+| What | How to run | Needs a phone? |
+|---|---|---|
+| The pytest suite (`tests/test_*.py`) | `python3 -m pytest -q` | No |
+| The dry-run analyzer tests (`tests/test_dry_run_safety.py`) | included in the above | No |
+| The hardware edge-case script (`tests/test_edge_cases.py`) | `python3 tests/test_edge_cases.py` | **Yes** |
 
-```bash
-# Run all tests
-python3 tests/test_e2e_operations.py
-
-# The test suite will:
-# 1. Detect your connected Android phone
-# 2. Create test-android-mtp folder on phone
-# 3. Populate with test files and edge cases
-# 4. Run all 4 operation tests (copy, move, sync, backup)
-# 5. Verify results match expected behavior
-# 6. Cleanup test folder from phone
-# 7. Print summary report
-```
-
-## Test Structure
-
-### On Your Phone: `test-android-mtp/`
-
-```
-test-android-mtp/
-├── copy_test/
-│   ├── single_file.mp4
-│   ├── nested/
-│   │   ├── deep/
-│   │   │   └── file_in_nested_deep.mp4
-│   │   └── file_in_nested.mp4
-│   └── empty_folder/
-├── move_test/
-│   ├── single_file.mp4
-│   ├── nested/
-│   │   ├── deep/
-│   │   │   └── file_in_nested_deep.mp4
-│   │   └── file_in_nested.mp4
-│   └── empty_folder/
-├── sync_test/
-│   ├── single_file.mp4
-│   ├── nested/
-│   │   ├── deep/
-│   │   │   └── file_in_nested_deep.mp4
-│   │   └── file_in_nested.mp4
-└── backup_test/
-    ├── single_file.mp4
-    ├── nested/
-    │   ├── deep/
-    │   │   └── file_in_nested_deep.mp4
-    │   └── file_in_nested.mp4
-    └── empty_folder/
-```
-
-### On Desktop: `~/.local/share/phone_migration_tests/`
-
-Test output directories created during testing:
-- `copy_output/` - Results of copy test
-- `move_output/` - Results of move test
-- `sync_source/` - Source files for sync test
-- `backup_output/` - Results of backup test
-
-## Test Cases
-
-### 1. COPY Operation
-**Expected Behavior:** Files copied to desktop, NOT deleted from phone
-
-- Source: `test-android-mtp/copy_test/`
-- Destination: `~/.local/share/phone_migration_tests/copy_output/`
-- Verification:
-  - Files exist on desktop ✓
-  - Files still exist on phone ✓
-  - File counts match ✓
-
-**Edge Cases Tested:**
-- Single file at root
-- Nested folders (1 level deep)
-- Deep folders (2+ levels deep)
-- Empty directories
-
-### 2. MOVE Operation
-**Expected Behavior:** Files copied to desktop, DELETED from phone
-
-- Source: `test-android-mtp/move_test/`
-- Destination: `~/.local/share/phone_migration_tests/move_output/`
-- Verification:
-  - Files exist on desktop ✓
-  - Files NOT on phone (empty folder) ✓
-  - File counts match source → desktop ✓
-
-### 3. SYNC Operation
-**Expected Behavior:** Desktop files mirrored to phone
-
-- Source: `~/.local/share/phone_migration_tests/sync_source/` (desktop)
-- Destination: `test-android-mtp/sync_test/` (phone)
-- Verification:
-  - Files exist on phone ✓
-  - File counts match ✓
-  - Sync maintains structure ✓
-
-### 4. BACKUP Operation
-**Expected Behavior:** Files backed up from phone to desktop (resumable, no deletion)
-
-- Source: `test-android-mtp/backup_test/`
-- Destination: `~/.local/share/phone_migration_tests/backup_output/`
-- Verification:
-  - Files exist on desktop ✓
-  - Files still exist on phone ✓
-  - Supports resume on interruption ✓
-
-## Requirements
-
-### For Testing
-
-1. **Connected Android Phone** via USB with MTP enabled
-2. **File Transfer Mode** enabled on phone (not Charging mode)
-3. **Phone Unlocked** during test execution
-4. **Test Videos** in `tests/videos/` directory (included)
-
-### Prerequisites
+## The pytest suite
 
 ```bash
-# Ensure phone_migration tool is installed
-cd /home/average_l/Programming/projects/android-mtp-sync
-pip install -e .
+# From the project root
+python3 -m pytest -q
 
-# Or run directly (no installation)
-python3 tests/test_e2e_operations.py
+# One module
+python3 -m pytest -q tests/test_operations.py
+
+# Treat warnings as errors, which is what the port runs before each commit
+python3 -m pytest -q -W error
 ```
 
-## Test Output Example
+Everything under `tests/test_*.py` is collected by pytest except
+`test_edge_cases.py` (see below). No phone, no network and no real
+`~/.config` or `~/.local` access is involved: `tests/conftest.py` redirects the
+config, state and history paths into a temporary directory for every test, and
+`tests/fake_gio.py` stands in for the `gio` subprocess calls.
 
-```
-======================================================================
-PHONE MIGRATION - END-TO-END TEST SUITE
-======================================================================
+| Module | Covers |
+|---|---|
+| `test_operations.py` | move, copy, backup and sync rule execution, conflict handling, deletion refusals |
+| `test_runner.py` | rule selection, the `RunResult` shape, preflight wiring, dry-run analysis output |
+| `test_state.py` | the resume state file, its lock, corrupt-file recovery |
+| `test_config.py` | profile and rule storage, atomic writes, the XDG migration copy |
+| `test_device.py` | MTP device detection and serial-based profile matching |
+| `test_paths.py` | phone-path normalization, MTP URI building, duplicate renaming |
+| `test_gio_utils.py` | the `gio` command wrappers, timeouts, failure propagation |
+| `test_browser.py` | the interactive phone browser |
+| `test_notifications.py` | `notify-send` integration |
+| `test_main.py` | argument parsing and the CLI entry points |
+| `test_theme.py` | palette contrast, icon widths, and that no module references a `Colors.X` / `Icons.X` that does not exist |
+| `test_no_emoji.py` | an emoji and wide-glyph sweep over the CLI-facing modules |
+| `test_dry_run_safety.py` | `dry_run_analyzer.analyze_dry_run_results` against synthetic rule/stats pairs |
+| `test_web_ui.py` | the web UI's routes, host and origin guards, and path confinement |
 
-✓ Connected device: SAMSUNG Android
-  Profile: S25-ultra
-  URI: mtp://SAMSUNG_SAMSUNG_Android_R5CY43CZ5AR/
+`test_dry_run_safety.py` is plain pytest functions rather than a class, and it
+touches nothing outside the analyzer: it feeds it `(rule, stats)` tuples and
+asserts on the blockers, warnings and info notes that come back.
 
-✓ Local test directory: /home/average_l/.local/share/phone_migration_tests
+## The hardware edge-case script
 
-Setting up test folder structure on phone...
+`tests/test_edge_cases.py` is **not** collected by pytest — its class is named
+`ImprovedEdgeCaseTestSuite`, which does not match pytest's `Test*` pattern, and
+it runs from its own `__main__` block:
 
-✓ Created test-android-mtp/
-✓ Found 18 test videos
-
-  copy_test/
-    └── single_file/
-    └── nested/deep/
-    └── empty_folder/
-      └── single_file.mp4
-        └── file_in_nested.mp4
-        └── file_in_nested_deep.mp4
-  ...
-
-----------------------------------------------------------------------
-TEST 1: COPY OPERATION
-----------------------------------------------------------------------
-Expected: Files copied from phone to desktop, NOT deleted from phone
-
-Source (phone): test-android-mtp/copy_test
-Destination (desktop): /home/average_l/.local/share/phone_migration_tests/copy_output
-
-Files to copy: 3
-
-Running copy operation...
-
-✓ Copied 3 files to desktop
-✓ Files still on phone: 3
-
-✅ COPY TEST PASSED
-```
-
-## Troubleshooting
-
-### "No device connected"
-- Ensure phone is connected via USB
-- Check phone shows "File Transfer" mode in USB options
-- Try: `gio mount -li | grep -i samsung`
-
-### "Device activation URI not found"
-- Device not yet registered in phone_migration config
-- Run the web UI to register device first, or manually add to `~/.config/phone-migration/config.json`
-
-### Test hangs on file copy
-- Phone likely locked or in sleep mode
-- Unlock phone and keep it active during tests
-- Check USB connection is stable
-
-### "Failed to create directory"
-- Phone write permission issue
-- Try running cleanup script first: `./cleanup_mtp_nuclear.sh`
-- Check phone isn't connected to other file managers
-
-## Advanced Usage
-
-### Run Specific Test Only
-
-Edit `test_e2e_operations.py` and comment out tests in `main()`:
-
-```python
-def main():
-    suite = TestSuite()
-    if not suite.setup():
-        return 1
-    if not suite.populate_test_structure():
-        return 1
-    
-    # Uncomment only desired test:
-    suite.test_copy_operation()
-    # suite.test_move_operation()
-    # suite.test_sync_operation()
-    # suite.test_backup_operation()
-    
-    suite.cleanup()
-    suite.print_summary()
-    return 0 if suite.results["failed"] == 0 else 1
-```
-
-### Skip Cleanup
-
-Comment out `suite.cleanup()` to inspect files after test:
-
-```python
-def main():
-    # ... run tests ...
-    # suite.cleanup()  # Skip cleanup to inspect results
-    suite.print_summary()
-    return 0
-```
-
-### Custom Test Videos
-
-Replace files in `tests/videos/`:
 ```bash
-# Add your own test files
-cp your_videos/*.mp4 tests/videos/
+python3 tests/test_edge_cases.py
 ```
 
-The test suite will automatically use all `.mp4` files found.
+It is a standalone integration script that drives a real phone through
+`tests/helpers/mtp_testlib.py`. It is **known to be out of date and is not run by
+CI**; treat it as a starting point rather than a passing suite.
 
-## Test Helpers API
+### What it needs
 
-### MTPDevice Class
+- An Android phone connected over USB in File Transfer mode, unlocked, and left
+  unlocked for the whole run.
+- Roughly 2 GB free on the phone and on the desktop.
+- **Video files that you supply yourself** in `tests/videos/`. That directory was
+  removed from the repository and is gitignored — test media does not belong in
+  git. Drop three to five files of your own in, or generate placeholders:
+
+```bash
+mkdir -p tests/videos
+dd if=/dev/zero of=tests/videos/test1.mp4 bs=1M count=10
+```
+
+Without those files the script fails at its first video lookup.
+
+### What it touches
+
+Unlike the pytest suite, this script is **not** isolated. It writes to
+`Internal storage/test-phone-edge-v2/` on the phone and to
+`~/.local/share/phone_edge_tests_v2/` on the desktop, and it reads, backs up and
+restores your **real** `~/.local/share/phone-migration/state.json`. Do not run it
+in the middle of a backup you care about resuming.
+
+### What it checks
+
+Connection sanity, copy rename and skip-on-conflict handling, move's
+copy-then-verify-then-delete ordering, sync skipping unchanged files, large file
+transfers, the preflight disk-space check, symlink traversal and loop guarding,
+device disconnection, concurrent state access, corrupt-state recovery, and
+read-only file permissions. `tests/docs/TESTING.md` has the long form.
+
+## Test helpers
+
+`tests/helpers/mtp_testlib.py` wraps bare `gio` subprocess calls for the
+hardware script:
 
 ```python
-from tests.helpers.mtp_testlib import MTPDevice
+from tests.helpers.mtp_testlib import MTPDevice, compare_trees
 
 device = MTPDevice("mtp://SAMSUNG_SAMSUNG_Android_R5CY43CZ5AR/")
 
-# Directory operations
 device.mkdir("/path/to/dir")
 device.list_dir("/path/to/dir")
 device.remove("/path/to/item")
 
-# File operations
 device.push_file(Path("local.mp4"), "/phone/path/file.mp4")
 device.push_file_recursive(Path("local_dir"), "/phone/dir")
 
-# Query operations
 device.path_exists("/phone/path")
 device.get_file_info("/phone/path")
 
-# Tree structure
-tree = device.directory_tree("/phone/path")
+differences = compare_trees(device.directory_tree("/a"), device.directory_tree("/b"))
 ```
 
-### compare_trees Function
+It is used by `test_edge_cases.py` only; the pytest suite uses
+`tests/fake_gio.py` instead.
 
-```python
-from tests.helpers.mtp_testlib import compare_trees
+## Troubleshooting
 
-tree1 = device.directory_tree("/path1")
-tree2 = device.directory_tree("/path2")
+**"No device connected"** (hardware script only)
+Check the phone is in File Transfer mode and unlocked, then
+`gio mount -li | grep -i mtp`.
 
-differences = compare_trees(tree1, tree2)
-for diff in differences:
-    print(diff)
-```
+**"Device activation URI not found"**
+The device is not registered yet. Run `python3 main.py --add-device --name test`.
 
-## Adding New Tests
+**The script hangs on a file copy**
+The phone locked or slept. Unlock it and keep it awake.
 
-1. Create new test method in `TestSuite` class:
-```python
-def test_custom_operation(self) -> bool:
-    print("\nTEST X: CUSTOM OPERATION")
-    # Your test logic
-    self.results["passed"] += 1
-    return True
-```
+**Only one application at a time**
+Linux MTP is exclusive. Close any file manager holding the phone, then
+`systemctl --user restart gvfs-daemon`.
 
-2. Call from `main()`:
-```python
-suite.test_custom_operation()
-```
+## Further reading
 
-3. Commit and document the test case
-
-## Interpreting Results
-
-| Result | Meaning |
-|--------|---------|
-| ✅ PASSED | Operation behaved as expected |
-| ❌ FAILED | Operation did not match expected behavior |
-| ⊘ SKIPPED | Test was not executed |
-| 🎉 ALL TESTS PASSED | All tests successful, no regressions |
-
-## Best Practices
-
-1. **Run After Code Changes** - Execute test suite before committing
-2. **Keep Phone Connected** - Don't disconnect phone during tests
-3. **Monitor Phone** - Unlock and interact if needed (files being transferred)
-4. **Check Logs** - Print output shows detailed operation progress
-5. **Review Cleanup** - Verify test folders removed from phone after completion
-
-## Performance Notes
-
-- First run populates phone with test files (slower)
-- Subsequent runs reuse same files (faster)
-- Each operation averages 5-30 seconds depending on network/USB speed
-- Total test suite typically completes in 2-5 minutes
-
-## Contributing
-
-Found a bug or have an improvement? Update the test suite:
-
-1. Fix the issue in `phone_migration/`
-2. Update relevant test in `tests/test_e2e_operations.py`
-3. Verify all tests pass
-4. Commit with clear message describing what was tested
+- [tests/docs/TESTING.md](docs/TESTING.md) — the hardware script in detail
+- [tests/docs/EDGE_CASES_PRIORITY.md](docs/EDGE_CASES_PRIORITY.md) — the edge
+  cases and why each one matters
+- [docs/OPERATIONS.md](../docs/OPERATIONS.md) — the behavior the tests assert

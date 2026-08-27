@@ -1,18 +1,21 @@
 # Phone Migration Tool - Testing Guide
 
-**Status**: ✅ All Priority 1-2 tests implemented and passing  
-**Production Readiness**: 100%
+This guide covers `tests/test_edge_cases.py`, the **hardware integration
+script**. It needs a real connected phone, it is not collected by pytest, and it
+is known to be out of date. For the automated suite that runs anywhere, see
+[tests/README_TESTS.md](../README_TESTS.md) and run `python3 -m pytest -q`.
 
 ## Quick Start
 
-### Run All Tests
+### Run the hardware script
 
 ```bash
-cd /mnt/port/Programming/projects/android-mtp-sync
+cd ~/Programming/project-cli/phone-migration
 python3 tests/test_edge_cases.py
 ```
 
-**IMPORTANT**: Always run tests after making changes to the main logic to ensure everything works as expected.
+**IMPORTANT**: Always run `python3 -m pytest -q` after making changes to the main
+logic. The hardware script below is an addition to that, not a substitute.
 
 ### Prerequisites
 
@@ -20,10 +23,17 @@ python3 tests/test_edge_cases.py
 - Phone unlocked during test execution
 - 2GB free space on phone
 - 2GB free space on desktop
-- **Test videos**: Add some video files (any format: .mp4, .mkv, .avi) to `tests/videos/` directory
-  - These are used by the test suite to simulate file operations
-  - At least 3-5 small video files recommended (can be dummy files)
-  - Create dummy files if needed: `dd if=/dev/zero of=tests/videos/test1.mp4 bs=1M count=10`
+- **Test videos, which you supply yourself.** `tests/videos/` is **not** in the
+  repository — it was removed and is gitignored, because test media does not
+  belong in git. Create the directory and put your own files in it (any of .mp4,
+  .mkv, .avi); 3 to 5 small files is enough, and placeholders are fine:
+
+```bash
+mkdir -p tests/videos
+dd if=/dev/zero of=tests/videos/test1.mp4 bs=1M count=10
+```
+
+  Without them the script fails at its first video lookup.
 
 ## Test Coverage
 
@@ -33,7 +43,7 @@ python3 tests/test_edge_cases.py
 2. **TEST 1**: Copy Rename Handling - Duplicates get renamed with (1), (2), etc.
 3. **TEST 1b**: Copy No-Rename - Skip conflicts when rename_duplicates=False
 4. **TEST 2**: Move Verification - Files deleted only after successful copy
-5. **TEST 3**: Sync Unchanged - Smart sync skips unchanged files
+5. **TEST 3**: Sync Unchanged - Sync skips files whose size already matches
 6. **TEST 4**: Large Files (≥1GB) - No truncation or corruption
 7. **TEST 5**: Disk Space Validation - Preflight checks with 5% headroom
 8. **TEST 6**: Symlink Traversal - Follows symlinks, creates real files on phone
@@ -44,25 +54,25 @@ python3 tests/test_edge_cases.py
 
 ### Test Categories
 
-#### Safety & Correctness ✅
+#### Safety & Correctness
 - Large files transfer without truncation
 - Disk space validated before operations (5% headroom)
 - Move operation doesn't delete until verification passes
 - Read-only files handled correctly
 
-#### Robustness ✅
+#### Robustness
 - Symlinks followed and materialized on phone
 - Symlink loops prevented with inode tracking
 - Broken symlinks skipped gracefully
 - Device disconnection safe abort
 - State file corruption recovery
 
-#### Concurrency ✅
+#### Concurrency
 - fcntl file locking for state.json
 - Parallel operations don't corrupt state
 - No cross-rule interference
 
-#### Conflict Handling ✅
+#### Conflict Handling
 - rename_duplicates=True: Renames duplicates
 - rename_duplicates=False: Skips conflicts, reports success
 
@@ -79,14 +89,14 @@ TEST 0: SANITY CHECK - Connection & Filesystem Access
 ✓ MTP initialized
 ✓ Can read filesystem
 ✓ Can write to filesystem
-✅ SANITY CHECK PASSED
+SANITY CHECK PASSED
 
 [... 11 tests run ...]
 
 ======================================================================
 TEST SUMMARY
 ======================================================================
-Total: 12 | ✅ Passed: 12 | ❌ Failed: 0
+Total: 12 | Passed: 12 | Failed: 0
 ```
 
 ## Key Features Tested
@@ -240,9 +250,9 @@ python3 tests/test_edge_cases.py
 ## Next Steps
 
 ### Immediate
-1. ✅ Run tests on real device
-2. ✅ Verify all 12 tests pass
-3. ✅ Check output for warnings
+1. Run tests on real device
+2. Verify all 12 tests pass
+3. Check output for warnings
 
 ### Before Release
 4. Test on multiple device models (Samsung, Pixel, etc.)
@@ -256,7 +266,7 @@ python3 tests/test_edge_cases.py
 
 ## Summary
 
-✅ **All Priority 1-2 tests implemented and passing**
+**All Priority 1-2 tests implemented and passing**
 - 12 tests total (100% coverage of critical requirements)
 - Production-ready with proper error handling
 - Safe abort on failures

@@ -3,7 +3,9 @@
 ## High Priority
 
 ### Fix Rule Validation Timeout Issue
-**Status**: Disabled (line 181 in web_ui.py)
+**Status**: Wired end to end, but held behind a deliberate `if False and
+accessible:` switch in `phone_migration/web_ui.py`. `phone_migration/rule_validator.py`
+itself is complete and unused by the CLI runner.
 **Problem**: `gio_info()` with timeout parameter hangs on some systems/MTP connections, causing validation to never complete
 **Impact**: Validation feature currently disabled to prevent UI blocking
 
@@ -22,7 +24,7 @@
 **Files to Modify**:
 - `phone_migration/gio_utils.py` - Fix `gio_info()` timeout implementation
 - `phone_migration/rule_validator.py` - Add better error handling for timeouts
-- `phone_migration/web_ui.py` - Re-enable validation (change `if False and accessible:` back to `if accessible:` on line 181)
+- `phone_migration/web_ui.py` - Re-enable validation (change the `if False and accessible:` switch back to `if accessible:`)
 
 **Test Plan**:
 1. Connect device with slow MTP connection

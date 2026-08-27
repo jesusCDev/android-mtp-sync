@@ -1,208 +1,332 @@
 # Phone Migration Tool
 
-Automate file transfers between your Android phone and Linux desktop via MTP (Media Transfer Protocol). Simplify your workflow with configurable sync and move operations.
+Automate file transfers between an Android phone and a Linux desktop over MTP
+(Media Transfer Protocol). Rules are stored per device profile and executed with
+one command, from the CLI or from a local web UI.
+
+> **`--run` previews. `--run -y` transfers.**
+> Every execution command defaults to a dry run: it scans, prints exactly what it
+> would do, and touches nothing — no files copied, no files deleted, no state
+> written. Add `-y` (or `--yes`, or `--execute`) when you actually want the
+> transfer to happen. There is no `--dry-run` flag; dry run is the default.
 
 ## Features
 
-- **Web UI**: Modern web interface for managing devices, rules, and running operations with a graphical folder browser
-- **Device Profiles**: Register your phone with a unique identifier to ensure operations run on the correct device
-- **Four Operation Modes**: Move, Copy, Backup, and Sync - each optimized for different use cases (see [docs/OPERATIONS.md](docs/OPERATIONS.md))
-  - **Move**: Copy from phone to desktop, then delete from phone (archive photos/videos)
-  - **Copy**: Copy from phone to desktop, keep on both (regular backups)
-  - **Backup**: Resumable copy with smart skip (large transfers, unstable connections)
-  - **Sync**: Mirror desktop to phone, desktop as source of truth (playlists, documents)
-- **Smart Sync**: Intelligently skips unchanged files by comparing file sizes (rsync-like behavior) - saves time and bandwidth
-- **Folder Browser**: Graphical folder picker for both phone (MTP) and desktop paths - no more guessing folder names!
-- **Conflict Handling**: Toggle between two strategies for duplicate files:
-  - **Rename on Conflict** (default): Automatically rename duplicates with (1), (2), etc. suffixes
-  - **Skip on Conflict**: Skip files that already exist without renaming them
-- **Device Accessibility Check**: Automatically detects when phone is locked and inaccessible
-- **Dry Run Mode**: Preview operations before executing
-- **Path Flexibility**: Support for both `/DCIM/Camera` and `Internal storage/DCIM/Camera` path formats
+- **Web UI**: an optional local Flask app with a graphical phone/desktop folder
+  browser, live run progress, and run history
+- **Four rule modes**: move, copy, backup (resumable), and sync — see
+  [docs/OPERATIONS.md](docs/OPERATIONS.md) for what each one does to your files
+- **Device profiles**: rules are bound to a phone's MTP serial, so plugging in a
+  different phone runs that phone's rules and nothing else
+- **Dry run by default**, with a safety analysis of the preview before you commit
+  to it
+- **Preflight disk-space check** before every real transfer
+- **Resumable backups**: a backup that is interrupted picks up where it stopped
+- **Manual-only rules**: rules you tag `--manual` are skipped by a plain `--run`
+  and execute only when you ask for them — `--run --manual` for all of them, or
+  `--run -r <id>` for one
+- **Desktop notifications**: `--notify` sends a summary through `notify-send`
+- **Path flexibility**: `/DCIM/Camera`, `DCIM/Camera`, `Internal storage/DCIM/Camera`
+  and `SD Card/DCIM/Camera` all work
 
 ## Requirements
 
-### System Packages (Fedora Linux)
+### System packages (Fedora Linux)
 
-The tool uses `gio` (part of GVFS) to interact with MTP devices. These packages should already be installed on Fedora:
+The tool shells out to `gio` (part of GVFS) to talk to MTP devices:
 
 ```bash
-# Verify packages are installed
 rpm -qa | grep -E "(gvfs|mtp)"
 ```
 
-You should see:
-- `libmtp`
-- `gvfs`
-- `gvfs-mtp`
-- `gvfs-fuse`
-- `gvfs-client`
+You should see `libmtp`, `gvfs`, `gvfs-mtp`, `gvfs-fuse` and `gvfs-client`.
+If any are missing:
 
-If missing, install with:
 ```bash
 sudo dnf install gvfs gvfs-mtp gvfs-fuse libmtp
 ```
 
 ### Python
 
-- Python 3.10+ (tested with Python 3.14)
-- No external dependencies - uses standard library only
+- Python 3.10 or newer.
+- **The CLI needs no third-party packages** — it is standard library only.
+- **The web UI needs Flask.** Install it only if you intend to use `--web`:
+
+```bash
+pip install -r requirements-web.txt
+```
 
 ## Installation
 
-1. The project is already set up at `~/Programming/project-cli/phone-migration/`
+1. Clone or copy the project somewhere convenient.
 
-2. Make the main script executable:
+2. Make the entry point executable:
+
 ```bash
-chmod +x ~/Programming/project-cli/phone-migration/main.py
+chmod +x main.py
 ```
 
-3. (Optional) Create an alias in your `~/.zshrc`:
+3. (Optional but recommended) add an alias to your `~/.zshrc` or `~/.bashrc`:
+
 ```bash
-alias phone-sync='python3 ~/Programming/project-cli/phone-migration/main.py'
+alias phone-sync='python3 /path/to/phone-migration/main.py'
 ```
 
-## How MTP Works on Linux
+The rest of this document writes commands as `phone-sync`; `python3 main.py`
+from the project directory is exactly equivalent.
 
-When you connect your Android phone in File Transfer mode:
+## How MTP works on Linux
 
-1. The phone is detected by the system via USB
-2. GVFS (GNOME Virtual File System) automatically mounts it via MTP
-3. The mount point appears at `/run/user/$UID/gvfs/mtp:host=...`
-4. File managers like Dolphin and Nemo can browse these mounts
-5. The `gio` command provides CLI access to these virtual filesystems
+When you connect an Android phone in File Transfer mode:
 
-This tool uses `gio` commands to interact with your phone through MTP URIs like `mtp://[usb:003,009]/Internal storage/DCIM/Camera`.
+1. The phone is detected over USB.
+2. GVFS mounts it via MTP.
+3. The mount appears under `/run/user/$UID/gvfs/mtp:host=...`.
+4. Graphical file managers browse that mount.
+5. `gio` gives command-line access to the same virtual filesystem.
 
-## Quick Start
+This tool drives `gio` against MTP URIs such as
+`mtp://[usb:003,009]/Internal storage/DCIM/Camera`.
 
-### 1. Connect Your Phone
+### One application at a time
 
-1. Connect phone via USB cable
-2. On your phone, select "File Transfer" or "MTP" mode from the notification
-3. Unlock your phone
-4. Verify detection: `gio mount -li | grep -i mtp`
-
-### 2. Register Your Device
+Linux MTP allows only **one** application to hold the device at a time. If a
+file manager (Nemo, Dolphin, Nautilus, Thunar, PCManFM) has your phone open
+while this tool runs, the device is reported as connected but not accessible.
 
 ```bash
-cd ~/Programming/project-cli/phone-migration
-python3 main.py --add-device --name default
+# Close the file managers and restart GVFS
+killall nemo dolphin nautilus pcmanfm thunar
+systemctl --user restart gvfs-daemon
 ```
 
-This creates a profile that identifies your specific phone.
+## Quick start
 
-### 3. Configure Rules
+### 1. Connect the phone
 
-**Move photos from phone to desktop** (copies then deletes from phone):
+1. Connect the phone over USB.
+2. On the phone, pick "File Transfer" / "MTP" from the USB notification.
+3. Unlock the phone and keep it unlocked.
+4. Confirm the mount: `gio mount -li | grep -i mtp`
+
+### 2. Register the device
+
 ```bash
-python3 main.py --move --profile default \
-  --phone-path /DCIM/Camera \
-  --desktop-path ~/Videos/phone_images/Camera
+phone-sync --add-device --name default
 ```
 
-**Sync motivational videos from desktop to phone** (desktop is source of truth):
+This writes a profile that identifies your specific phone by its MTP serial.
+
+### 3. Configure rules
+
+Move photos off the phone (copy to desktop, then delete from the phone):
+
 ```bash
-python3 main.py --sync --profile default \
-  --desktop-path ~/Videos/motiv \
-  --phone-path /Videos/motiv
+phone-sync --move -p default -pp /DCIM/Camera -dp ~/Pictures/Camera
 ```
 
-### 4. Run Sync Operations
+Mirror a desktop folder onto the phone (desktop is the source of truth):
 
 ```bash
-python3 main.py --run
+phone-sync --sync -p default -dp ~/Videos/motiv -pp /Videos/motiv
 ```
 
-The tool will:
-- Detect your connected phone
-- Match it to the registered profile
-- Execute all configured rules
-- Show progress and summary
-
-## CLI Reference
-
-### Device Management
+### 4. Preview, then run
 
 ```bash
-# Register connected phone (creates/updates profile)
-python3 main.py --add-device [--name PROFILE_NAME]
-
-# List all profiles
-python3 main.py --list-profiles
+phone-sync --run        # preview: prints what would happen, changes nothing
+phone-sync --run -y     # execute
 ```
 
-### Rule Management
+## CLI reference
+
+Exactly one command flag is required per invocation.
+
+### Device management
 
 ```bash
-# Add move rule (phone → desktop, delete from phone)
-python3 main.py --move --profile PROFILE \
-  --phone-path /DCIM/Camera \
-  --desktop-path ~/Videos/phone_images/Camera
+# Register the connected phone (creates or updates a profile)
+phone-sync --add-device [--name PROFILE]
 
-# Add sync rule (desktop → phone, desktop is source of truth)
-python3 main.py --sync --profile PROFILE \
-  --desktop-path ~/Videos/motiv \
-  --phone-path /Videos/motiv
+# List every configured profile
+phone-sync --list-profiles
 
-# List rules for a profile
-python3 main.py --list-rules --profile PROFILE
+# Check whether a registered phone is connected right now
+phone-sync --check
+
+# Walk the phone's directory tree interactively
+phone-sync --browse-phone
+```
+
+`--check` exits `0` when a registered device is connected and `1` when it is
+not, which makes it usable as a guard in scripts.
+
+### Rule management
+
+```bash
+# Move rule: phone -> desktop, delete from the phone afterwards
+phone-sync --move -p PROFILE -pp /DCIM/Camera -dp ~/Pictures/Camera
+
+# Copy rule: phone -> desktop, keep both copies
+phone-sync --copy -p PROFILE -pp /DCIM/Camera -dp ~/Pictures/Camera
+
+# Backup rule: phone -> desktop, resumable, never deletes
+phone-sync --backup -p PROFILE -pp /DCIM/Camera -dp ~/Backups/Phone
+
+# Sync rule: desktop -> phone, desktop is the source of truth
+phone-sync --sync -p PROFILE -dp ~/Videos/motiv -pp /Videos/motiv
+
+# Mark a new rule manual-only (a plain --run skips it)
+phone-sync --copy -p PROFILE -pp /DCIM/Screenshots -dp ~/Pictures --manual
+
+# List the rules of a profile
+phone-sync --list-rules -p PROFILE
+
+# Edit a rule (any of -pp, -dp, -m, --manual/--no-manual)
+phone-sync --edit-rule -p PROFILE -i r-0001 -pp /DCIM/Screenshots
+phone-sync --edit-rule -p PROFILE -i r-0001 --no-manual
 
 # Remove a rule
-python3 main.py --remove-rule --profile PROFILE --id r-0001
-
-# Edit a rule
-python3 main.py --edit-rule --profile PROFILE --id r-0001 \
-  --phone-path /DCIM/Screenshots
+phone-sync --remove-rule -p PROFILE -i r-0001
 ```
+
+`--smart-copy` is a **deprecated alias for `--backup`**. It still works, and
+existing rules stored with `"mode": "smart_copy"` still run as backups, but new
+rules should use `--backup`.
 
 ### Execution
 
 ```bash
-# Run all rules for connected device
-python3 main.py --run
+# Preview every auto rule (default; changes nothing)
+phone-sync --run
 
-# Dry run (preview without executing)
-python3 main.py --run --dry-run
+# Execute every auto rule
+phone-sync --run -y
 
-# Verbose output
-python3 main.py --run --verbose
+# Include manual-only rules as well
+phone-sync --run --manual -y
+
+# Run specific rules by id (repeat -r for more than one)
+phone-sync --run -r r-0003 -y
+phone-sync --run -r r-0003 -r r-0005 -y
+
+# File-by-file output
+phone-sync --run -y --verbose
+
+# Desktop notification with the summary when the run finishes
+phone-sync --run -y --notify
 ```
+
+`--notify` needs `notify-send` on `PATH` (package `libnotify`); without it the
+run still succeeds and the notification is silently skipped. A dry run does not
+send the *completion* notification, but it still notifies when no device was
+found.
 
 ### Web UI
 
 ```bash
-# Start web interface (recommended)
-python3 main.py --web
+# Foreground (Ctrl+C to stop)
+phone-sync --web
 
-# Then open http://127.0.0.1:8080 in your browser
+# Background daemon, survives closing the terminal
+phone-sync --web --background
+
+# Stop a running instance
+phone-sync --web --stop
 ```
 
-The web UI provides a user-friendly interface with:
-- Dashboard showing device connection status
-- Profile management with device registration
-- Rule configuration with **graphical folder browser**
-- **Conflict handling toggle**: Choose between renaming or skipping duplicate files
-- Live operation execution with progress tracking
-- Operation history and logs
+The server binds **`http://127.0.0.1:8080`** — loopback only, never a public
+interface. Start-up refuses to proceed if port 8080 is already in use rather
+than half-starting.
 
-## Configuration Files
+### Environment variables
 
-### Main Configuration
-Configuration is stored in JSON at: `~/Programming/project-cli/phone-migration/config.json`
+| Variable | Effect |
+|---|---|
+| `NO_COLOR` (any value) | Disables all ANSI color. Color is also off automatically when stdout is not a terminal. |
+| `NERD_FONT=1` | Use Nerd Font glyphs for icons. Auto-detected when `WEZTERM_PANE` is set. |
+| `PHONE_SYNC_PLAIN_ICONS=1` | Force the plain single-width unicode icon set (`✓ ✗ ⚠ ▸ •`). Wins over `NERD_FONT`. |
+| `XDG_CONFIG_HOME` | Relocates the config and history directory. |
+| `XDG_STATE_HOME` | Relocates the web UI pid file and log. |
 
-### History Storage
-Operation history is persisted at: `~/.config/phone-migration/history.json`
+All three theme switches are read once, at start-up.
 
-This file stores the last 100 sync operations with:
-- Timestamps and profile information
-- Success/failure status
-- File operation statistics (moved, synced, errors)
-- Complete operation logs
+## What a run does
 
-History is automatically loaded when the web UI starts and saved after each operation.
+### Preflight disk-space check
 
-### Example Configuration
+Before each rule of a **real** (non-dry) run, the tool prints
+`Preflight: checking disk space for <mode>...` and estimates the transfer by
+walking the source tree, then compares it against the free space on the
+destination filesystem, requiring the transfer to fit with a 5% headroom left
+over. If it does not fit, that rule is **skipped** with a `Preflight check
+failed` message listing what is needed, what is free, and the deficit; the run
+continues with the remaining rules and the skipped rule counts as an error. A
+failure to *estimate* (rather than a genuine shortage) is reported as a warning
+and the rule proceeds. Sync is the exception: MTP does not expose the phone's
+free space, so a sync rule's space check is logged as skipped rather than
+enforced. Dry runs do no preflight at all.
+
+### Dry-run safety analysis
+
+After a dry run that touched at least one rule, the preview is re-read by an
+analyzer that looks for results that should be impossible, and prints
+`Analyzing dry-run results...` followed by any findings at three severities.
+
+**Blockers** are safety violations: a copy rule that reported deletions, a move
+rule whose deletion count does not equal its copies, a backup rule that deleted
+anything. Any blocker ends the output with `OPERATION BLOCKED` in place of the
+usual "execute with -y" hint.
+
+**Warnings** are legal outcomes worth a second look: a sync that would delete
+more than five times what it copies while copying fewer than ten files, a sync
+deleting more than 500 files, a non-sync rule deleting more than 100, or more
+than 1000 deletions against fewer than 100 copies.
+
+**Info** covers a rule that would change nothing — everything already present, or
+an empty source.
+
+With no findings at any severity the analysis prints `All safety checks
+passed!`. It reads only the preview's own statistics; it does not touch the
+phone or the desktop again.
+
+### Progress display
+
+Each rule shows an animated spinner line — `[2/5] SYNC (r-0003)` — while it
+runs, which is replaced on completion by a single line carrying a tick or a
+cross, the rule's summary, and its elapsed time. Underneath, an overall bar
+tracks completed rules and shows an ETA extrapolated from the rules finished so
+far. The spinner writes with carriage returns, so redirect to a file or set
+`NO_COLOR` if you want plain, line-oriented output.
+
+## File locations
+
+| What | Path |
+|---|---|
+| Configuration (profiles + rules) | `~/.config/phone-migration/config.json` |
+| Backup resume state | `~/.local/share/phone-migration/state.json` |
+| Backup state lock | `~/.local/share/phone-migration/state.lock` |
+| Web UI pid file | `~/.local/state/phone-migration/web.pid` |
+| Web UI log | `~/.local/state/phone-migration/web.log` |
+
+`XDG_CONFIG_HOME` overrides the config directory; `XDG_STATE_HOME` overrides the
+pid file and log.
+
+Every read-modify-write of `state.json` happens while holding an exclusive
+`fcntl` lock on `state.lock`, so two runs racing on different rules cannot drop
+each other's progress. Both `config.json` and `state.json` are written
+atomically — an interrupted write never leaves a truncated file — and a
+`state.json` that fails to parse is renamed `state.json.corrupt` with a warning
+rather than silently reset.
+
+**Migration from the old location.** Early versions kept `config.json` inside
+the project checkout at `~/Programming/project-cli/phone-migration/config.json`.
+If that file exists and no XDG config does yet, it is **copied** (not moved) to
+`~/.config/phone-migration/config.json` on the next run, and the tool prints a
+one-line note saying so. The old file is left untouched so you can verify the
+copy before deleting it.
+
+### Example configuration
 
 ```json
 {
@@ -221,7 +345,7 @@ History is automatically loaded when the web UI starts and saved after each oper
           "id": "r-0001",
           "mode": "move",
           "phone_path": "/DCIM/Camera",
-          "desktop_path": "~/Videos/phone_images/Camera",
+          "desktop_path": "~/Pictures/Camera",
           "recursive": true
         },
         {
@@ -230,8 +354,15 @@ History is automatically loaded when the web UI starts and saved after each oper
           "desktop_path": "~/Videos/motiv",
           "phone_path": "/Videos/motiv",
           "recursive": true,
-          "overwrite": true,
           "delete_extraneous": true
+        },
+        {
+          "id": "r-0003",
+          "mode": "backup",
+          "phone_path": "/Documents",
+          "desktop_path": "~/Backups/Phone/Documents",
+          "recursive": true,
+          "manual_only": true
         }
       ]
     }
@@ -239,354 +370,284 @@ History is automatically loaded when the web UI starts and saved after each oper
 }
 ```
 
-### Configuration Fields
+### Configuration fields
 
-**Profile:**
-- `name`: Profile identifier
-- `device.display_name`: Human-readable device name
-- `device.id_type`: How device is identified (mtp_serial, identifier, usb_address)
-- `device.id_value`: Unique device identifier value
-- `device.activation_uri`: MTP URI (updated automatically on connection)
+**Profile**
 
-**Move Rule:**
-- `phone_path`: Source path on phone (e.g., `/DCIM/Camera`)
-- `desktop_path`: Destination on desktop (e.g., `~/Videos/phone_images/Camera`)
-- Behavior: Copy files to desktop, then delete from phone
-- Duplicates: Renamed with (1), (2), etc.
+- `name` — profile identifier, what you pass to `-p`
+- `device.display_name` — human-readable device name
+- `device.id_type` — always `mtp_serial`
+- `device.id_value` — the phone's MTP serial number
+- `device.activation_uri` — MTP URI, refreshed automatically on each connection
 
-**Sync Rule:**
-- `desktop_path`: Source on desktop (source of truth)
-- `phone_path`: Destination on phone
-- Behavior: Smart sync desktop to phone - only copies new/changed files (by size), deletes extraneous phone files
-- Desktop files always take precedence, desktop files are never deleted
-- Unchanged files are automatically skipped for faster syncs
+**Rule (all modes)**
 
-## Phone Path Formats
+- `id` — assigned automatically (`r-0001`, `r-0002`, ...)
+- `mode` — `move`, `copy`, `backup`, `sync` (or the legacy `smart_copy`)
+- `phone_path` / `desktop_path` — the two endpoints
+- `recursive` — written into new rules but **never read**; every mode always
+  descends into subdirectories. Setting it to `false` changes nothing.
+- `manual_only` — when `true`, a plain `--run` skips the rule; run it with
+  `--run --manual` or `--run -r <id>`
 
-The tool accepts multiple path formats:
+**Sync rule only**
 
-```bash
-# Leading slash (relative to Internal storage)
-/DCIM/Camera
+- `delete_extraneous` — when `true`, phone files that no longer exist on the
+  desktop are deleted. See the safety rails in
+  [docs/OPERATIONS.md](docs/OPERATIONS.md#sync-mode).
 
-# Explicit storage label
-Internal storage/DCIM/Camera
-SD Card/DCIM/Camera
+Sync always overwrites a phone file whose size differs from the desktop copy;
+there is no flag for it.
 
-# No leading slash (assumes Internal storage)
-DCIM/Camera
-```
-
-All paths are normalized internally to MTP URIs.
-
-## Common Phone Paths
-
-- **Photos**: `/DCIM/Camera`, `/DCIM/Screenshots`
-- **Videos**: `/DCIM/Camera`, `/Movies`
-- **Downloads**: `/Download`
-- **Documents**: `/Documents`
-- **Music**: `/Music`
-- **Custom folders**: Any path you create
-
-## Web UI Guide
-
-The web interface is the easiest way to use the phone migration tool.
-
-### Starting the Web UI
+## Phone path formats
 
 ```bash
-cd ~/Programming/project-cli/phone-migration
-python3 main.py --web
+/DCIM/Camera                    # leading slash: relative to Internal storage
+DCIM/Camera                     # no leading slash: same thing
+Internal storage/DCIM/Camera    # explicit storage label
+SD Card/DCIM/Camera             # the other storage
 ```
 
-Open your browser to: **http://127.0.0.1:8080**
+All forms are normalized to a percent-encoded MTP URI internally.
 
-### Web UI Features
+### Common phone paths
 
-#### 1. Dashboard
-- **Improved Device Status**: Horizontal layout showing Device, Profile, and Rules in a clean grid
-- **Run Operations**: Execute rules with real-time progress tracking
-- **Dry Run & Notifications**: Toggle options before running
-- **Manual Rules**: Run specific manual-only rules on demand
-- **Live Statistics**: See files moved, backed up, synced, and errors in real-time
-- **Operation History**: Persistent history across app restarts
+- Photos: `/DCIM/Camera`, `/DCIM/Screenshots`
+- Videos: `/DCIM/Camera`, `/Movies`
+- Downloads: `/Download`
+- Documents: `/Documents`
+- Music: `/Music`
 
-#### 2. Profiles Page
-- Register new devices with one click
-- View all registered devices
-- Delete old profiles
+## Sample output
 
-#### 3. Rules Page (with Folder Browser!)
-- Add rules with an intuitive form
-- **Browse phone folders** - click the Browse button next to Phone Path to visually navigate your phone's folder structure
-- **Browse desktop folders** - click the Browse button next to Desktop Path to navigate your computer's filesystem
-- **Folder Browser Features:**
-  - Navigate with breadcrumbs or Up button
-  - Type or paste paths directly in the path bar (press Enter to jump)
-  - Create new folders on desktop with the "New Folder" button
-  - Toggle "Show hidden" to see/hide hidden files (those starting with `.`)
-  - Files are shown but grayed out (directories only for selection)
-  - Single-click to select, double-click to navigate into folders
-  - ESC or click outside to close the browser
-- Edit or delete existing rules
-- See all rules for your connected device
+Listing profiles:
 
-#### 4. Dashboard - Run Operations (Enhanced)
-- Execute configured rules with real-time progress
-- See which files are being transferred
-- View operation statistics
-- Option for dry-run preview
-- **Rename on Conflict toggle**: Control duplicate file handling:
-  - **Enabled** (default): Rename duplicates as `filename (1).ext`, `filename (2).ext`, etc.
-  - **Disabled**: Skip files that already exist without renaming them
-  - Affects all operation types: move, copy, smart copy, and sync
-- **Command Preview**: Displays the exact command that will execute with color-coded syntax
-- **Operation Details Modal**: Click "Expand" on any operation card to:
-  - View the formatted command in **Command View** tab
-  - See detailed file listings in **Detail View** tab showing:
-    - Files being copied (with source and destination)
-    - Files being deleted
-    - Files being skipped
-    - Folders being created
-  - Modal displays full-screen with close button and Escape key support
+```
+$ phone-sync --list-profiles
 
-#### 5. History Page
-- **Persistent Storage**: History is now saved to `~/.config/phone-migration/history.json`
-- **Survives Restarts**: View operation history even after closing and reopening the web UI
-- View past operation logs with expandable details
-- See success/failure status with color-coded badges
-- Review file counts and statistics for each run
-- Filter by status (success/error) and limit results
-- Relative timestamps ("5 minutes ago", "2 hours ago", etc.)
-- Last 100 operations are kept
+Configured Profiles (1 total)
+──────────────────────────────────────────────────────────────────────
 
-### Using the Folder Browser
+▪ s25-ultra
+  Device: SAMSUNG Android
+  ID:     mtp_serial=R5CY43CZ5AR
+  Rules:  4 auto + 1 manual
+```
 
-The folder browser makes it easy to select paths without knowing exact folder names:
+Listing rules:
 
-**For Desktop Paths:**
-1. Click "Browse" next to Desktop Path
-2. Browser starts at your home directory (`~`)
-3. Navigate by clicking folders or using the Up button
-4. Use breadcrumbs to jump to parent folders
-5. Type/paste a path in the path bar and press Enter to jump directly
-6. Click "New Folder" to create a new destination folder
-7. Check "Show hidden" if you need to navigate to hidden folders (like `.config`)
-8. Click "Select Current Folder" when you're in the right place
+```
+$ phone-sync --list-rules -p s25-ultra
 
-**For Phone Paths:**
-1. Connect your phone first (unlocked, in File Transfer mode)
-2. Click "Browse" next to Phone Path
-3. Browser shows your phone's root directories (DCIM, Download, etc.)
-4. Navigate the same way as desktop folders
-5. Common folders like `/DCIM/Camera` are easy to find by clicking
-6. Files are shown for context but cannot be selected
+Rules for profile 's25-ultra' (5 total)
+──────────────────────────────────────────────────────────────────────
 
-**Tips:**
-- Hidden files are hidden by default (toggle with checkbox)
-- Desktop browsing works across the entire filesystem (including `/mnt`, `/media`)
-- Phone browsing requires the device to be connected
-- You can still type paths manually if you prefer!
+[r-0001] ↑ MOVE
+  Phone:   /Download
+  Desktop: ~/Downloads
+  Action:  Copy to desktop, then delete from phone
+  ····························································
+
+[r-0003] ⇄ SYNC
+  Desktop: ~/Videos/phone_videos/ck (source)
+  Phone:   /Videos/ck
+  Action:  Mirror desktop to phone (desktop is source of truth)
+  ····························································
+
+[r-0004] + BACKUP [MANUAL]
+  Phone:   /Documents/ringtone
+  Desktop: ~/Downloads/test
+  Action:  Backup to desktop (resumable, no deletions)
+```
+
+A preview run with nothing plugged in:
+
+```
+$ phone-sync --run
+
+────────────────────────────────────────────────────────────
+▪  Phone Migration Tool
+────────────────────────────────────────────────────────────
+
+! DRY RUN MODE (preview only, no changes)
+
+? Scanning for connected devices...
+
+✗ No device found
+
+Possible reasons:
+  • Phone not connected via USB
+  • File Transfer mode disabled
+  • Phone is locked
+  • Device not yet registered
+
+Next steps:
+  1. Connect phone & enable File Transfer
+  2. Register: phone-sync --add-device --name default
+  3. Execute: phone-sync --run -y
+```
+
+(These samples were captured with `PHONE_SYNC_PLAIN_ICONS=1 NO_COLOR=1`. With a
+Nerd Font terminal the icons are Font Awesome glyphs instead.)
 
 ## Examples
 
-### Scenario 1: Backup All Photos
+### Archive all photos off the phone
 
 ```bash
-# Register device
-python3 main.py --add-device
+phone-sync --add-device --name default
 
-# Move camera photos
-python3 main.py --move --profile default \
-  --phone-path /DCIM/Camera \
-  --desktop-path ~/Videos/phone_images/Camera
+phone-sync --move -p default -pp /DCIM/Camera -dp ~/Pictures/Camera
+phone-sync --move -p default -pp /DCIM/Screenshots -dp ~/Pictures/Screenshots
 
-# Move screenshots
-python3 main.py --move --profile default \
-  --phone-path /DCIM/Screenshots \
-  --desktop-path ~/Videos/phone_images/Screenshots
-
-# Run
-python3 main.py --run
+phone-sync --run          # preview first
+phone-sync --run -y       # then transfer
 ```
 
-### Scenario 2: Sync Workout Videos
+### Keep workout videos mirrored onto the phone
 
 ```bash
-# Keep workout videos in sync (desktop → phone)
-python3 main.py --sync --profile default \
-  --desktop-path ~/Videos/Workouts \
-  --phone-path /Videos/Workouts
-
-python3 main.py --run
+phone-sync --sync -p default -dp ~/Videos/Workouts -pp /Videos/Workouts
+phone-sync --run -y
 ```
 
-### Scenario 3: Multiple Phones
+### Resumable backup of a large folder
 
 ```bash
-# Register personal phone
-python3 main.py --add-device --name personal
-
-# Register work phone
-python3 main.py --add-device --name work
-
-# Add rules to each profile
-python3 main.py --move --profile personal \
-  --phone-path /DCIM/Camera \
-  --desktop-path ~/Videos/personal_photos
-
-python3 main.py --move --profile work \
-  --phone-path /DCIM/Camera \
-  --desktop-path ~/Videos/work_photos
-
-# Plug in either phone and run - it will use the correct profile
-python3 main.py --run
+phone-sync --backup -p default -pp /DCIM -dp ~/Backups/Phone/DCIM --manual
+phone-sync --run -r r-0004 -y
+# interrupted? run the same command again - it resumes
 ```
 
-## Important: MTP Exclusivity Limitation
+### Two phones, one config
 
-⚠️ **Linux MTP only allows ONE application to access the device at a time.**
-
-If you open your phone in a file manager (Nemo, Dolphin, Nautilus, etc.) while using this tool, you will get:
-```
-Device Connected But Not Accessible
-```
-
-**Solution:**
 ```bash
-# Close all file managers and restart GVFS
-./prepare_mtp.sh
+phone-sync --add-device --name personal
+phone-sync --add-device --name work
 
-# Or manually:
-killall nemo dolphin nautilus pcmanfm thunar
-systemctl --user restart gvfs-daemon
+phone-sync --move -p personal -pp /DCIM/Camera -dp ~/Pictures/personal
+phone-sync --move -p work     -pp /DCIM/Camera -dp ~/Pictures/work
+
+# Plug in either phone; the matching profile is selected by serial number
+phone-sync --run -y
 ```
-
-Then run the tool:
-```bash
-phone-sync --web
-```
-
-**Important:** Do not open your phone in a file manager while using this tool. Only one application can have exclusive MTP access at a time.
 
 ## Troubleshooting
 
-### Phone Not Detected
+### Phone not detected
 
 ```bash
-# Check if MTP device is mounted
-gio mount -li | grep -i mtp
-
-# Check USB connection
-lsusb | grep -i android
-
-# Verify GVFS services
+gio mount -li | grep -i mtp          # is it mounted?
+lsusb | grep -i android              # is it on the bus?
 systemctl --user list-units | grep gvfs
 ```
 
-**Solutions:**
-- Ensure phone is unlocked
-- Select "File Transfer" mode in phone notification
-- Try disconnecting and reconnecting
-- Check USB cable (some cables are charge-only)
+- Unlock the phone and keep it unlocked.
+- Select "File Transfer" mode in the phone's USB notification.
+- Reconnect; try a different cable (many are charge-only).
 - Restart GVFS: `systemctl --user restart gvfs-daemon`
+- Close any file manager that has the phone open — see
+  [One application at a time](#one-application-at-a-time).
 
-### Profile Not Matching
+### "Device exposes no serial number; cannot register it reliably"
+
+`--add-device` refuses phones that do not publish an MTP serial. A profile
+without a serial would match *every* serial-less phone plugged into this
+machine, which is how rules end up running against the wrong device and
+deleting the wrong files — so registration is refused instead.
+
+Some phones only publish a serial once the USB mode is fully settled. Unlock the
+phone, re-pick "File Transfer" in the USB notification, unplug and replug, then
+retry. If the serial never appears, the device cannot be used with this tool.
+
+### Profile not matching
 
 ```bash
-# Check device fingerprint
-python3 main.py --add-device --name test --verbose
-
-# Manually inspect config
-cat ~/Programming/project-cli/phone-migration/config.json
+phone-sync --check --verbose
+cat ~/.config/phone-migration/config.json | jq .
 ```
 
-### Permission Errors
+A registered phone matches on `device.id_value`. If the serial changed (a
+factory reset can do this), re-register with `--add-device --name <profile>`.
+
+### Permission errors
 
 ```bash
-# Ensure you're in the right groups
 groups
-
-# Check file permissions on destination
-ls -la ~/Videos/phone_images
+ls -la ~/Pictures/Camera
 ```
 
-### Copy Failures
+The tool runs entirely as your user; it never needs root.
 
-- **Disk full**: Check available space on desktop
-- **File name issues**: Special characters in filenames may cause issues
-- **Phone locked**: Keep phone unlocked during transfer
-- **Connection timeout**: MTP can be slow; be patient with large files
+### Copy failures
 
-### Sync Deletes Wrong Files
+- **Disk full** — the preflight check reports the deficit and skips the rule.
+- **Phone locked** — MTP stalls the moment the screen locks.
+- **Timeouts** — a single `gio copy` is given one hour; listing operations get
+  60 seconds. A timeout is reported as an error, and nothing is deleted.
+- **Size mismatch** — if the copy that arrives is not the same size as the
+  source, the file is reported failed and, in a move rule, the original stays on
+  the phone.
 
-- Use `--dry-run` first to preview actions
-- Verify `desktop_path` is correct - it's the source of truth!
-- Check that `delete_extraneous: true` is intended behavior
+### Sync deleted something unexpected
 
-## Performance Notes
+- Run without `-y` first — a dry run prints every deletion it would make, then
+  analyzes the preview for exactly this class of mistake.
+- Check that `desktop_path` is the folder you meant: in sync mode it is the
+  source of truth, and the phone side is made to match it.
+- `delete_extraneous` has its own refusals; see [Safety](#safety).
 
-- MTP is slower than direct USB mass storage
-- Large files (>100MB) may take time
-- Keep phone unlocked and screen on for best reliability
-- Network/WiFi won't interfere but avoid heavy phone usage during transfer
+### Web UI will not start
+
+- `Error: port 8080 still in use; nothing started` — something already holds the
+  port. `phone-sync --web --stop` if it is a previous instance of this tool.
+- `phone-sync --web --stop` exiting `1` means the process ignored the signal and
+  is still running; the pid file is deliberately kept so you can kill it by hand.
+- Background start failures are logged to
+  `~/.local/state/phone-migration/web.log`.
+- `ModuleNotFoundError: No module named 'flask'` — run
+  `pip install -r requirements-web.txt`.
 
 ## Safety
 
-- **Backups**: Always maintain backups of important files
-- **Dry run**: Use `--dry-run` to preview operations
-- **Test first**: Try with a small test folder before bulk operations
-- **Verification**: Move operations verify file size before deletion
-- **No root**: Tool runs as regular user, no root access needed
+- **Dry run is the default.** `--run` previews; only `-y` transfers.
+- **Every real run is preflighted.** A rule whose transfer would not fit on the
+  destination with 5% to spare is skipped before it starts.
+- **Move verifies before deleting.** A file is deleted from the phone only after
+  the desktop copy exists and its size matches the source. If the source size
+  cannot be read, the copy is kept and the original is left on the phone.
+- **Sync fails closed on a bad desktop path.** If `desktop_path` is not a
+  directory the rule errors out immediately and nothing is copied or deleted.
+- **Sync refuses to delete blindly.** With `delete_extraneous: true`, deletion is
+  skipped entirely — with a warning, while the copying half still runs — when the
+  desktop scan hit any unreadable entry (a broken symlink, or a symlinked
+  directory that loops back into the tree already walked), when the scan found no
+  files at all, or when the phone path is the storage root. A partial scan never
+  becomes a mass deletion.
+- **Backup never deletes anything**, on either side.
+- **Keep backups** of anything irreplaceable, and test a new rule against a small
+  folder first.
+- **No root.** The tool runs as a regular user.
 
-## UI Design
+## Performance notes
 
-### Color Palette
-The web UI uses a soft pastel color scheme designed to be easy on the eyes during extended use:
-- **Accent (Lavender)**: `#C8A2E0` - Primary interactive elements
-- **Info (Sky Blue)**: `#9DD4FF` - Information and status updates
-- **Success (Mint Green)**: `#8FD6B5` - Successful operations
-- **Warning (Peachy-Gold)**: `#FFD699` - Warnings and cautions
-- **Danger (Coral Red)**: `#FF9898` - Errors and destructive actions
-
-### Operation Details
-Each operation card includes an "Expand" button that opens a detailed modal showing:
-1. **Command View**: The exact command being executed with syntax highlighting
-   - Color-coded flags and parameters
-   - Execute mode vs. dry-run indicators
-2. **Detail View**: File-level breakdown by category
-   - Individual files being copied/moved
-   - Files marked for deletion
-   - Files being skipped
-   - Folders being created
+- MTP is substantially slower than USB mass storage; large files take time.
+- Keep the phone unlocked and awake for the duration of a transfer.
+- Avoid heavy phone use during a run.
+- For very large trees, prefer a `backup` rule: it is resumable, so an
+  interrupted transfer does not start over.
 
 ## Documentation
 
-### User Guides
-- **[docs/OPERATIONS.md](docs/OPERATIONS.md)** - Detailed guide to all four operation modes (Move, Copy, Backup, Sync) with examples and use cases
-- **[warp.md](warp.md)** - Quick reference for Warp Terminal users with common commands and workflows
-
-### Developer Documentation
-- **[tests/docs/TESTING.md](tests/docs/TESTING.md)** - Comprehensive testing guide with coverage details
-- **[tests/docs/EDGE_CASES_PRIORITY.md](tests/docs/EDGE_CASES_PRIORITY.md)** - Edge case scenarios and priority levels
-- **[CHANGELOG.md](CHANGELOG.md)** - Version history and changes
-
-### Archived Documentation
-- **[docs/archive/](docs/archive/)** - Historical documents and diagnostic reports
-
-## Future Enhancements
-
-See `docs/TODO.md` for planned features including:
-- Auto-run on device connect (systemd/udev)
-- Progress bars for large transfers
-- Hash-based duplicate detection
-- EXIF date-based organization
-- File filtering patterns
+- [docs/OPERATIONS.md](docs/OPERATIONS.md) — what each of the four rule modes
+  does to your files, with the exact conflict and deletion rules
+- [docs/DESIGN_SYSTEM.md](docs/DESIGN_SYSTEM.md) — the CLI palette and icon set
+- [docs/warp.md](docs/warp.md) — quick reference for Warp Terminal users
+- [docs/CHANGELOG.md](docs/CHANGELOG.md) — version history
+- [docs/TODO.md](docs/TODO.md) — known gaps and planned work
+- [tests/README_TESTS.md](tests/README_TESTS.md) — how to run the test suites
+- [docs/archive/](docs/archive/) — superseded documents, kept for reference
 
 ## License
 
-This is a personal tool. Use at your own risk.
-
-## Contributing
-
-This is a personal project, but suggestions and improvements are welcome!
+A personal tool. Use at your own risk.

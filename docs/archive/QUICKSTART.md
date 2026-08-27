@@ -1,156 +1,223 @@
 # Phone Migration - Quick Start
 
-Get up and running in 5 minutes!
+> **Archived.** The onboarding path now lives in the root
+> [README.md](../../README.md), which this file duplicates in shorter form. It is
+> kept because it is still accurate and still the fastest way in. Everything
+> below is verified against the current CLI.
+
+Up and running in five minutes.
+
+> **The one thing to remember:** `--run` is a *preview*. It prints what it would
+> do and changes nothing. Add `-y` when you want the transfer to actually
+> happen. There is no `--dry-run` flag — dry run is the default.
 
 ## Prerequisites
 
-✅ Android phone with USB cable  
-✅ Fedora Linux (you have this)  
-✅ Python 3.10+ (you have 3.14)
+- An Android phone and a USB cable
+- Fedora Linux with `gvfs`, `gvfs-mtp` and `libmtp` installed
+- Python 3.10 or newer (no third-party packages needed for the CLI)
 
-## Step 1: Connect Your Phone
+## Step 1: Connect the phone
 
-1. Plug phone into computer via USB
-2. On your phone: Pull down notification shade
-3. Tap the USB notification
-4. Select **"File Transfer"** or **"Transfer files"**
-5. Unlock your phone
+1. Plug the phone in over USB.
+2. On the phone, pull down the notification shade.
+3. Tap the USB notification.
+4. Choose **"File Transfer"** / **"Transfer files"**.
+5. Unlock the phone and leave it unlocked.
 
-**Verify connection:**
+Verify:
+
 ```bash
 gio mount -li | grep -i mtp
 ```
 
-You should see something like `Mount(0): Your Phone Name`
+You should see a line like `Mount(0): Your Phone Name`.
 
-## Step 2: Register Your Phone
+## Step 2: Register the phone
 
 ```bash
-cd ~/Programming/project-cli/phone-migration
 python3 main.py --add-device --name default
 ```
 
-You should see: `✓ Device registered to profile 'default'`
+You should see `✓ Device registered to profile 'default'`.
 
-## Step 3: Add Your First Rule
+If instead you get `Device exposes no serial number; cannot register it
+reliably`, re-pick File Transfer mode on the phone, unplug and replug, and try
+again — a profile without a serial would match every serial-less phone, so it is
+refused rather than saved.
 
-### Example: Move Photos from Phone to Desktop
+## Step 3: Add your first rule
+
+### Move photos off the phone
 
 ```bash
-python3 main.py --move --profile default \
-  --phone-path /DCIM/Camera \
-  --desktop-path ~/Videos/phone_images/Camera
+python3 main.py --move -p default -pp /DCIM/Camera -dp ~/Pictures/Camera
 ```
 
-This will:
-- Copy all photos from phone's Camera folder
-- Save them to `~/Videos/phone_images/Camera/`
-- Delete them from your phone after successful copy
+This will copy every photo from the phone's Camera folder to
+`~/Pictures/Camera/`, then delete it from the phone once the desktop copy is
+verified by size.
 
-### Example: Sync Videos to Phone
+### Or: copy them and keep both
 
 ```bash
-python3 main.py --sync --profile default \
-  --desktop-path ~/Videos/motiv \
-  --phone-path /Videos/motiv
+python3 main.py --copy -p default -pp /DCIM/Camera -dp ~/Pictures/Camera
 ```
 
-This will:
-- Mirror your desktop `~/Videos/motiv/` folder to phone
-- Desktop is the source of truth
-- Any changes on desktop will sync to phone
-
-## Step 4: Run the Sync
+### Or: mirror a desktop folder onto the phone
 
 ```bash
+python3 main.py --sync -p default -dp ~/Videos/motiv -pp /Videos/motiv
+```
+
+The desktop side is the source of truth: it is never modified, and the phone is
+made to match it.
+
+Not sure which mode you want? See [docs/OPERATIONS.md](../OPERATIONS.md).
+
+## Step 4: Preview, then run
+
+```bash
+# Preview - prints every file it would touch, changes nothing
 python3 main.py --run
+
+# Happy with the preview? Execute it
+python3 main.py --run -y
 ```
 
-That's it! Your files are now syncing.
+## Step 5: Check what you configured
 
-## Step 5: Check Results
-
-List your configured rules:
 ```bash
-python3 main.py --list-rules --profile default
+python3 main.py --list-rules -p default
 ```
 
-## Common Commands
+## Common commands
 
 ```bash
-# See what would happen without actually doing it
-python3 main.py --run --dry-run
+# Is my phone connected and recognized?
+python3 main.py --check
 
-# More detailed output
-python3 main.py --run --verbose
+# Preview a run
+python3 main.py --run
+
+# Execute a run
+python3 main.py --run -y
+
+# Execute with file-by-file output
+python3 main.py --run -y --verbose
+
+# Include manual-only rules
+python3 main.py --run --manual -y
+
+# Run one specific rule
+python3 main.py --run -r r-0001 -y
 
 # List all profiles
 python3 main.py --list-profiles
 
+# Browse the phone's folders from the terminal
+python3 main.py --browse-phone
+
 # Remove a rule
-python3 main.py --remove-rule --profile default --id r-0001
+python3 main.py --remove-rule -p default -i r-0001
 ```
 
-## Optional: Create Alias
+## Optional: create an alias
 
 Add to `~/.zshrc`:
+
 ```bash
-alias phone-sync='python3 ~/Programming/project-cli/phone-migration/main.py'
+alias phone-sync='python3 /path/to/phone-migration/main.py'
 ```
 
-Then reload: `source ~/.zshrc`
+Reload with `source ~/.zshrc`, then:
 
-Now you can just run:
 ```bash
-phone-sync --run
+phone-sync --run -y
 ```
+
+## Optional: the web UI
+
+The web UI is the only part that needs a third-party package:
+
+```bash
+pip install -r requirements-web.txt
+python3 main.py --web
+```
+
+Open **http://127.0.0.1:8080**. Use `--web --background` to keep it running
+after you close the terminal, and `--web --stop` to shut it down.
+
+## Where your settings live
+
+| What | Path |
+|---|---|
+| Profiles and rules | `~/.config/phone-migration/config.json` |
+| Backup resume state | `~/.local/share/phone-migration/state.json` (+ `state.lock`) |
+| Web UI pid + log | `~/.local/state/phone-migration/` |
+
+If you used an older version that kept `config.json` inside the project folder,
+it is copied to the new location automatically on the next run, and the original
+is left in place.
 
 ## Troubleshooting
 
 **Phone not detected?**
+
 ```bash
-# Check MTP mount
+# Check the MTP mount
 gio mount -li
 
 # Restart GVFS
 systemctl --user restart gvfs-daemon
 ```
 
-**Want to test first?**
-- Create a test folder on your phone with a few files
-- Add a move rule for that folder
-- Run with `--dry-run` first
-- Then run without dry-run
+Then unlock the phone and re-select File Transfer mode.
 
-## What Next?
+**Want to test safely first?**
 
-- Read `README.md` for detailed documentation
-- Check `warp.md` for Warp terminal integration
-- See `docs/TODO.md` for upcoming features
+- Create a small test folder on the phone with a couple of files.
+- Add a rule for that folder.
+- Run `python3 main.py --run` and read the preview.
+- Only then add `-y`.
 
-## Your First Sync Workflow
+**Colors or icons look wrong?**
 
 ```bash
-# 1. Connect phone (enable File Transfer mode)
-# 2. Register device (one-time)
-python3 main.py --add-device
-
-# 3. Add rules (one-time per folder)
-python3 main.py --move --profile default \
-  --phone-path /DCIM/Camera \
-  --desktop-path ~/Videos/phone_images/Camera
-
-# 4. Run sync (every time you want to transfer)
-python3 main.py --run
-
-# Done! Disconnect phone.
+NO_COLOR=1 python3 main.py --run              # no ANSI color
+PHONE_SYNC_PLAIN_ICONS=1 python3 main.py --run  # plain unicode icons
+NERD_FONT=1 python3 main.py --run             # Nerd Font glyphs
 ```
 
-## Safety Tips
+## What next?
 
-- ✅ Use `--dry-run` first to preview
-- ✅ Start with a small test folder
-- ✅ Keep phone unlocked during transfer
-- ✅ Backups are always a good idea!
+- [README.md](../../README.md) — the full reference
+- [docs/OPERATIONS.md](../OPERATIONS.md) — what each mode does to your files
+- [docs/DESIGN_SYSTEM.md](../DESIGN_SYSTEM.md) — the CLI palette and icon set
 
-Happy syncing! 📱💻
+## Your first sync workflow
+
+```bash
+# 1. Connect phone (File Transfer mode, unlocked)
+# 2. Register the device (one time)
+python3 main.py --add-device --name default
+
+# 3. Add rules (one time per folder)
+python3 main.py --move -p default -pp /DCIM/Camera -dp ~/Pictures/Camera
+
+# 4. Preview, then transfer (every time)
+python3 main.py --run
+python3 main.py --run -y
+
+# Done - disconnect the phone.
+```
+
+## Safety tips
+
+- Run without `-y` first and read the preview.
+- Start with a small test folder.
+- Keep the phone unlocked for the whole transfer.
+- Move deletes from the phone only after the desktop copy is size-verified.
+- Sync with `delete_extraneous` deletes phone files; the desktop side is never
+  touched.
+- Keep independent backups of anything irreplaceable.
