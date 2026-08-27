@@ -424,3 +424,12 @@ header h1 i {
 
 /* Mono font utility for command previews */
 .code, .command-preview { font-family: 'Inconsolata', 'Ubuntu Mono', monospace; }
+
+/* Alerts float over the page from every template (base.html owns the node). */
+#alert-container {
+    position: fixed;
+    top: 80px;
+    right: 24px;
+    z-index: 2000;
+    max-width: 400px;
+}

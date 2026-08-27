@@ -6,7 +6,10 @@ must reference Icons.X / Colors.X by name instead of a literal glyph.
 
 Files the port hasn't reached yet are allow-listed below (see tasks/port-plan.md
 for which task lands each one); delete an entry as its task migrates the file.
-Task 7 extends this scan to JS/HTML/CSS.
+
+The scan also covers the web UI's own sources - JS, CSS and templates. Font
+Awesome markup (<i class="fas fa-check">) is the icon system there; a literal
+emoji is not.
 """
 
 import unicodedata
@@ -20,9 +23,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 EXEMPT = {"phone_migration/theme.py"}
 
 # Not yet migrated off raw ANSI/emoji -- tracked in tasks/port-plan.md.
-NOT_YET_MIGRATED = {
-    "phone_migration/web_ui.py",         # Task 7
-}
+NOT_YET_MIGRATED = set()
 
 
 def source_files():
@@ -30,6 +31,9 @@ def source_files():
         *sorted(REPO_ROOT.glob("phone_migration/*.py")),
         *sorted(REPO_ROOT.glob("scripts/*.py")),
         REPO_ROOT / "main.py",
+        *sorted(REPO_ROOT.glob("phone_migration/static/js/*.js")),
+        *sorted(REPO_ROOT.glob("phone_migration/static/css/*.css")),
+        *sorted(REPO_ROOT.glob("phone_migration/web_templates/*.html")),
     ]
     skip = EXEMPT | NOT_YET_MIGRATED
     return [p for p in candidates if p.relative_to(REPO_ROOT).as_posix() not in skip]
@@ -37,7 +41,9 @@ def source_files():
 
 def test_source_files_are_found():
     """Guard against the scan below silently degrading into a no-op."""
-    assert len(source_files()) >= 4
+    scanned = {p.suffix for p in source_files()}
+    assert scanned >= {".py", ".js", ".css", ".html"}
+    assert len(source_files()) >= 20
 
 
 def _is_disallowed_glyph(ch: str) -> bool:

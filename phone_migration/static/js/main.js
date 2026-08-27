@@ -1,67 +1,73 @@
 // Shared API utility functions
+async function apiRequest(url, options) {
+    const response = await fetch(url, options);
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(body.error || `API error: ${response.status}`);
+    return body;
+}
+
 async function apiGet(url) {
-    const response = await fetch(url);
-    if (!response.ok) throw new Error(`API error: ${response.status}`);
-    return await response.json();
+    return apiRequest(url);
 }
 
 async function apiPost(url, data) {
-    const response = await fetch(url, {
+    return apiRequest(url, {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify(data)
     });
-    if (!response.ok) throw new Error(`API error: ${response.status}`);
-    return await response.json();
+}
+
+async function apiPut(url, data) {
+    return apiRequest(url, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(data)
+    });
 }
 
 async function apiDelete(url) {
-    const response = await fetch(url, {method: 'DELETE'});
-    if (!response.ok) throw new Error(`API error: ${response.status}`);
-    return await response.json();
+    return apiRequest(url, {method: 'DELETE'});
 }
 
 // Shared UI utility functions
-function showError(message) {
+
+// Escape server-supplied text before it reaches innerHTML. Phone filenames are
+// attacker-controlled: a file named `<img onerror=...>` must never execute.
+// Quotes are escaped too - values also land inside data-* attributes.
+const HTML_ESCAPES = {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'};
+
+function escapeHtml(text) {
+    if (text === null || text === undefined) return '';
+    return String(text).replace(/[&<>"']/g, ch => HTML_ESCAPES[ch]);
+}
+
+function showAlertIcon(message, className, icon) {
     const container = document.getElementById('alert-container');
     if (!container) return;
-    
+
     const alert = document.createElement('div');
-    alert.className = 'alert alert-danger';
-    alert.innerHTML = `<i class="fas fa-exclamation-circle"></i> ${message}`;
+    alert.className = `alert ${className}`;
+    alert.innerHTML = `<i class="fas ${icon}"></i> ${escapeHtml(message)}`;
     container.appendChild(alert);
-    
+
     setTimeout(() => alert.remove(), 5000);
+}
+
+function showError(message) {
+    showAlertIcon(message, 'alert-danger', 'fa-exclamation-circle');
 }
 
 function showSuccess(message) {
-    const container = document.getElementById('alert-container');
-    if (!container) return;
-    
-    const alert = document.createElement('div');
-    alert.className = 'alert alert-success';
-    alert.innerHTML = `<i class="fas fa-check-circle"></i> ${message}`;
-    container.appendChild(alert);
-    
-    setTimeout(() => alert.remove(), 5000);
+    showAlertIcon(message, 'alert-success', 'fa-check-circle');
 }
 
 function showInfo(message) {
-    const container = document.getElementById('alert-container');
-    if (!container) return;
-    
-    const alert = document.createElement('div');
-    alert.className = 'alert alert-info';
-    alert.innerHTML = `<i class="fas fa-info-circle"></i> ${message}`;
-    container.appendChild(alert);
-    
-    setTimeout(() => alert.remove(), 5000);
+    showAlertIcon(message, 'alert-info', 'fa-info-circle');
 }
 
 function showAlert(message, type = 'success') {
-    if (type === 'success') {
-        showSuccess(message);
-    } else if (type === 'danger' || type === 'error') {
+    if (type === 'danger' || type === 'error') {
         showError(message);
     } else if (type === 'info') {
         showInfo(message);

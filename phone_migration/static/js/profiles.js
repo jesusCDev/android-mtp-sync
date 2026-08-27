@@ -10,23 +10,34 @@ async function loadProfiles() {
             return;
         }
         
+        // A profile name is user-chosen and a device name is phone-reported:
+        // both are escaped, and neither goes anywhere near an inline handler.
         container.innerHTML = profiles.map(profile => `
             <div class="profile-card">
-                <h3>${profile.profile_name}</h3>
-                <p>Device: ${profile.device_name}</p>
-                <p style="font-size: 12px; color: var(--text-muted);">Rules: ${profile.rules_count}</p>
+                <h3>${escapeHtml(profile.profile_name)}</h3>
+                <p>Device: ${escapeHtml(profile.device_name)}</p>
+                <p style="font-size: 12px; color: var(--text-muted);">Rules: ${escapeHtml(profile.rules_count)}</p>
                 <div class="button-group" style="display: flex; gap: 8px; margin-top: 12px;">
-                    <button onclick="editProfile('${profile.profile_name}')" class="btn btn-small btn-secondary" style="flex: 1;">Edit</button>
-                    <button onclick="deleteProfile('${profile.profile_name}')" class="btn btn-small btn-danger" style="flex: 1;">Delete</button>
+                    <button data-edit-profile="${escapeHtml(profile.profile_name)}" class="btn btn-small btn-secondary" style="flex: 1;">Edit</button>
+                    <button data-delete-profile="${escapeHtml(profile.profile_name)}" class="btn btn-small btn-danger" style="flex: 1;">Delete</button>
                 </div>
             </div>
         `).join('');
     
     } catch (error) {
         console.error('Error loading profiles:', error);
-        document.getElementById('profiles-container').innerHTML = `<div class="alert alert-danger">Error loading profiles: ${error.message}</div>`;
+        document.getElementById('profiles-container').innerHTML =
+            `<div class="alert alert-danger">Error loading profiles: ${escapeHtml(error.message)}</div>`;
     }
 }
+
+// One delegated handler beats an inline onclick per profile card.
+document.getElementById('profiles-container').addEventListener('click', (event) => {
+    const edit = event.target.closest('[data-edit-profile]');
+    if (edit) return editProfile(edit.dataset.editProfile);
+    const remove = event.target.closest('[data-delete-profile]');
+    if (remove) deleteProfile(remove.dataset.deleteProfile);
+});
 
 async function loadConnectedDevices() {
     try {
@@ -38,12 +49,11 @@ async function loadConnectedDevices() {
             return;
         }
         
-        // Build options
-        let html = '<option value="">Select a device...</option>';
-        devices.forEach(device => {
-            html += `<option value="${device.mtp_id}" data-device-name="${device.device_name}">${device.device_name}</option>`;
-        });
-        deviceSelect.innerHTML = html;
+        // The display name comes from the phone itself: escape it.
+        deviceSelect.innerHTML = '<option value="">Select a device...</option>'
+            + devices.map(device =>
+                `<option value="${escapeHtml(device.mtp_id)}" data-device-name="${escapeHtml(device.device_name)}">${escapeHtml(device.device_name)}</option>`
+            ).join('');
     } catch (error) {
         console.error('Error loading devices:', error);
         const deviceSelect = document.getElementById('device-select');
@@ -89,16 +99,12 @@ async function deleteProfile(profileId) {
     if (!confirm('Are you sure you want to delete this profile?')) return;
     
     try {
-        const response = await fetch(`/api/profiles/${profileId}`, { method: 'DELETE' });
-        if (response.ok) {
-            loadProfiles();
-            showSuccess('Profile deleted successfully');
-        } else {
-            showError('Failed to delete profile');
-        }
+        await apiDelete(`/api/profiles/${encodeURIComponent(profileId)}`);
+        loadProfiles();
+        showSuccess('Profile deleted successfully');
     } catch (error) {
         console.error('Error deleting profile:', error);
-        showError('Failed to delete profile');
+        showError('Failed to delete profile: ' + error.message);
     }
 }
 
@@ -141,31 +147,20 @@ async function saveProfile() {
     }
     
     try {
-        // If editing, use PUT; if creating, use POST
-        const method = editingProfile ? 'PUT' : 'POST';
-        const url = editingProfile ? `/api/profiles/${editingProfile}` : '/api/profiles';
-        
-        const body = { name };
-        if (!editingProfile) {
-            body.device_id = deviceId;
-        }
-        
-        const response = await fetch(url, {
-            method: method,
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(body)
-        });
-        
-        if (response.ok) {
-            closeModal();
-            loadProfiles();
-            showSuccess(editingProfile ? 'Profile updated successfully' : 'Profile created successfully');
+        // A profile name can contain a slash: it has to be encoded, or it
+        // rewrites the request path instead of naming the profile.
+        if (editingProfile) {
+            await apiPut(`/api/profiles/${encodeURIComponent(editingProfile)}`, { name });
         } else {
-            showError(editingProfile ? 'Failed to update profile' : 'Failed to create profile');
+            await apiPost('/api/profiles', { name, device_id: deviceId });
         }
+        closeModal();
+        loadProfiles();
+        showSuccess(editingProfile ? 'Profile updated successfully' : 'Profile created successfully');
     } catch (error) {
         console.error('Error saving profile:', error);
-        showError('Failed to save profile');
+        showError((editingProfile ? 'Failed to update profile: ' : 'Failed to create profile: ')
+                  + error.message);
     }
 }
 

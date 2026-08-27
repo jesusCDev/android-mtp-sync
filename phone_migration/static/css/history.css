@@ -112,6 +112,9 @@
     }
     
     .log-preview {
+        white-space: pre-wrap;
+        word-break: break-word;
+        margin: 0;
         background: #0A0A0B;
         border: 1px solid var(--border-subtle);
         border-radius: var(--radius-card);
@@ -121,4 +124,49 @@
         color: var(--text-muted);
         max-height: 200px;
         overflow-y: auto;
+    }
+
+    .badge-dry-run {
+        margin-left: 8px;
+        padding: 2px 10px;
+        border-radius: 12px;
+        font-size: 11px;
+        font-weight: 600;
+        color: var(--warning);
+        background: rgba(245, 215, 161, 0.12);
+    }
+
+    .history-rule {
+        margin-bottom: 12px;
+        padding: 12px;
+        border: 1px solid var(--border-subtle);
+        border-radius: var(--radius-card);
+        background: rgba(0, 0, 0, 0.2);
+    }
+
+    .history-rule-header {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 8px;
+        font-size: 13px;
+        color: var(--text-muted);
+    }
+
+    .history-file {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 6px;
+        padding: 4px 0;
+        font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+        font-size: 12px;
+        color: var(--text);
+        word-break: break-all;
+    }
+
+    .history-file-action {
+        min-width: 64px;
+        color: var(--text-muted);
     }

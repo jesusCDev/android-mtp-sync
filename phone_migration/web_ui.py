@@ -1,52 +1,69 @@
-"""Web UI for Phone Migration Tool using Flask."""
+"""Web UI for Phone Migration Tool using Flask.
 
-import json
-import sys
+The API is same-origin only: every request must arrive on a host this server
+answers to, and every mutating request must carry a ``Sec-Fetch-Site`` of
+``same-origin``/``none`` or an ``Origin`` matching the host. Desktop browsing
+and folder creation are confined to ``ALLOWED_ROOTS``.
+
+Run results come from ``runner.run_for_connected_device`` as a structured
+``RunResult`` dict; nothing here parses CLI output. The printed lines are
+streamed into ``current_run_status["logs"]`` for display only.
+"""
+
+import contextlib
 import io
+import json
+import os
+import re
+import subprocess
+import sys
 import threading
 from datetime import datetime
 from pathlib import Path
-from flask import Flask, render_template, jsonify, request, redirect, url_for
-from flask_cors import CORS
+from urllib.parse import urlparse
 
-from . import config as cfg, device, runner, operations, browser, rule_validator
+from flask import Flask, render_template, jsonify, request
+
+from . import config as cfg, device, runner, browser, rule_validator, state
+from .theme import Colors, Icons
 
 
-app = Flask(__name__, 
+app = Flask(__name__,
             template_folder='web_templates',
             static_folder='static',
             static_url_path='/static')
-CORS(app)  # Enable CORS for API requests
 
 # Disable aggressive caching during development
 app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0
 app.config['TEMPLATES_AUTO_RELOAD'] = True
-app.config['CACHE_TYPE'] = 'null'
 
-# Disable Flask's caching for templates
-@app.after_request
-def add_no_cache_headers(response):
-    response.cache_control.no_cache = True
-    response.cache_control.no_store = True
-    response.cache_control.must_revalidate = True
-    response.headers['Pragma'] = 'no-cache'
-    response.headers['Expires'] = '0'
-    return response
+# Directories the desktop browser may reach into.
+ALLOWED_ROOTS = [Path.home(), Path("/media"), Path("/mnt"), Path("/run/media")]
 
-# Global state
+# Methods that cannot change state, and so need no origin check.
+SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
+
+# Host header values we answer to. start_web_ui() adds its own host:port.
+# A DNS-rebound page is same-origin to its own name, so the origin check alone
+# does not stop it - the Host it arrives with does.
+ALLOWED_HOSTS = {"localhost", "127.0.0.1", "[::1]"}
+
+# The only regex in this module: colour codes have to come off the log stream.
+_ANSI = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+
+# Global run state. `result` is the RunResult of the last finished run.
 current_run_status = {
     "running": False,
     "progress": 0,
-    "current_rule": None,
-    "stats": {},
-    "logs": []
+    "logs": [],
+    "result": None,
 }
 
-# History storage file path
-HISTORY_FILE = Path.home() / ".config" / "phone-migration" / "history.json"
+_run_lock = threading.Lock()
 
-# Bookmarks storage file path
-BOOKMARKS_FILE = Path.home() / ".config" / "phone-migration" / "bookmarks.json"
+# History and bookmarks live beside the config, wherever XDG points it.
+HISTORY_FILE = cfg.CONFIG_DIR / "history.json"
+BOOKMARKS_FILE = cfg.CONFIG_DIR / "bookmarks.json"
 
 # History storage (persisted to disk)
 run_history = []
@@ -59,6 +76,72 @@ validation_warnings = []
 validation_in_progress = False
 
 
+@app.before_request
+def require_same_origin():
+    """Refuse rebound hosts, and cross-site mutating requests."""
+    if request.host not in ALLOWED_HOSTS:
+        return jsonify({"error": "Bad host"}), 403
+
+    if request.method in SAFE_METHODS:
+        return None
+
+    if request.headers.get("Sec-Fetch-Site") in ("same-origin", "none"):
+        return None
+
+    origin = request.headers.get("Origin", "")
+    if origin and urlparse(origin).netloc == request.host:
+        return None
+
+    return jsonify({"error": "Cross-origin request refused"}), 403
+
+
+@app.after_request
+def add_no_cache_headers(response):
+    response.cache_control.no_cache = True
+    response.cache_control.no_store = True
+    response.cache_control.must_revalidate = True
+    response.headers['Pragma'] = 'no-cache'
+    response.headers['Expires'] = '0'
+    return response
+
+
+def _safe_desktop_path(raw_path: str) -> Path:
+    """Resolve a user-supplied desktop path, confined to ALLOWED_ROOTS."""
+    resolved = Path(os.path.realpath(Path(raw_path).expanduser()))
+
+    if any(resolved.is_relative_to(root) for root in ALLOWED_ROOTS):
+        return resolved
+
+    raise PermissionError(f"Path is outside the allowed directories: {resolved}")
+
+
+def _resolve_desktop_path(raw_path: str):
+    """Return (path, None), or (None, error_response) for a refused path."""
+    try:
+        return _safe_desktop_path(raw_path), None
+    except (ValueError, RuntimeError):          # embedded NUL, bad surrogate,
+        return None, (jsonify({"error": "Invalid path"}), 400)  # unresolvable ~user
+    except PermissionError as e:
+        return None, (jsonify({"error": str(e)}), 403)
+
+
+class StreamingOutput(io.TextIOBase):
+    """A stdout stand-in that streams completed, ANSI-stripped lines to a list."""
+
+    def __init__(self, lines):
+        self._lines = lines
+        self._buffer = ""
+
+    def write(self, text: str) -> int:
+        self._buffer += text
+        while "\n" in self._buffer:
+            line, self._buffer = self._buffer.split("\n", 1)
+            line = _ANSI.sub("", line).rstrip()
+            if line.strip():
+                self._lines.append(line)
+        return len(text)
+
+
 def load_history():
     """Load history from disk."""
     global run_history
@@ -66,22 +149,17 @@ def load_history():
         if HISTORY_FILE.exists():
             with open(HISTORY_FILE, 'r') as f:
                 run_history = json.load(f)
-    except Exception as e:
-        print(f"Warning: Failed to load history: {e}")
+    except (OSError, ValueError) as e:
+        print(f"{Colors.WARNING}{Icons.WARN}{Colors.RESET} Failed to load history: {e}")
         run_history = []
 
 
 def save_history():
     """Save history to disk."""
     try:
-        # Ensure directory exists
-        HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
-        
-        # Write history to file
-        with open(HISTORY_FILE, 'w') as f:
-            json.dump(run_history, f, indent=2)
-    except Exception as e:
-        print(f"Warning: Failed to save history: {e}")
+        cfg._atomic_write_json(HISTORY_FILE, run_history)
+    except OSError as e:
+        print(f"{Colors.WARNING}{Icons.WARN}{Colors.RESET} Failed to save history: {e}")
 
 
 def load_bookmarks():
@@ -90,28 +168,20 @@ def load_bookmarks():
     try:
         if BOOKMARKS_FILE.exists():
             with open(BOOKMARKS_FILE, 'r') as f:
-                bookmarks = json.load(f)
-                # Ensure structure is correct
-                if "desktop" not in bookmarks:
-                    bookmarks["desktop"] = []
-                if "phone" not in bookmarks:
-                    bookmarks["phone"] = []
-    except Exception as e:
-        print(f"Warning: Failed to load bookmarks: {e}")
+                loaded = json.load(f)
+            bookmarks = {"desktop": loaded.get("desktop", []),
+                         "phone": loaded.get("phone", [])}
+    except (OSError, ValueError, AttributeError) as e:
+        print(f"{Colors.WARNING}{Icons.WARN}{Colors.RESET} Failed to load bookmarks: {e}")
         bookmarks = {"desktop": [], "phone": []}
 
 
 def save_bookmarks():
     """Save bookmarks to disk."""
     try:
-        # Ensure directory exists
-        BOOKMARKS_FILE.parent.mkdir(parents=True, exist_ok=True)
-        
-        # Write bookmarks to file
-        with open(BOOKMARKS_FILE, 'w') as f:
-            json.dump(bookmarks, f, indent=2)
-    except Exception as e:
-        print(f"Warning: Failed to save bookmarks: {e}")
+        cfg._atomic_write_json(BOOKMARKS_FILE, bookmarks)
+    except OSError as e:
+        print(f"{Colors.WARNING}{Icons.WARN}{Colors.RESET} Failed to save bookmarks: {e}")
 
 
 @app.route('/')
@@ -150,63 +220,13 @@ def documentation():
 def api_status():
     """Get current system status."""
     global validation_warnings, validation_in_progress
-    from . import gio_utils, paths
+    from . import gio_utils
     config = cfg.load_config()
-    
+
     # Detect connected device
     profile = runner.detect_connected_device(config, verbose=False)
-    
-    if profile:
-        device_info = profile.get("device", {})
-        activation_uri = device_info.get("activation_uri", "")
-        
-        # Check device accessibility with a quick check
-        # Use gio_info on the device root - faster than mounting
-        accessible = False
-        if activation_uri:
-            try:
-                from . import gio_utils
-                # Quick check: try to get info on device root
-                # This is faster and more reliable than gio mount
-                info = gio_utils.gio_info(activation_uri, timeout=2)
-                # If we get any info back, device is accessible
-                accessible = bool(info)
-            except Exception:
-                # Any error = not accessible right now
-                accessible = False
-        
-        # Validate rules in background if device is accessible
-        # Skip validation for now - it can hang on slow MTP connections
-        # TODO: Re-enable with better timeout handling
-        if False and accessible:
-            def validate_in_background():
-                global validation_warnings, validation_in_progress
-                try:
-                    warnings = rule_validator.validate_profile_rules(profile)
-                    validation_warnings = [w.to_dict() for w in warnings]
-                except Exception as e:
-                    print(f"Warning: Rule validation failed: {e}")
-                    import traceback
-                    traceback.print_exc()
-                finally:
-                    validation_in_progress = False
-            
-            # Run validation in background thread to not block status check
-            # Only start if not already validating
-            if not validation_in_progress:
-                validation_in_progress = True
-                threading.Thread(target=validate_in_background, daemon=True).start()
-        
-        return jsonify({
-            "connected": True,
-            "accessible": accessible,
-            "device_name": device_info.get("display_name", "Unknown"),
-            "profile_name": profile.get("name", "unknown"),
-            "rule_count": len(profile.get("rules", [])),
-            "validation_warnings": validation_warnings,
-            "validation_in_progress": validation_in_progress
-        })
-    else:
+
+    if not profile:
         # Clear validation warnings when device disconnected
         validation_warnings = []
         return jsonify({
@@ -219,80 +239,119 @@ def api_status():
             "validation_in_progress": False
         })
 
+    device_info = profile.get("device", {})
+    activation_uri = device_info.get("activation_uri", "")
+
+    # Check device accessibility with a quick check on the device root -
+    # faster and more reliable than mounting.
+    accessible = False
+    if activation_uri:
+        try:
+            accessible = bool(gio_utils.gio_info(activation_uri, timeout=2))
+        except Exception:
+            accessible = False
+
+    # Rule validation is wired up end to end but disabled: it can hang for
+    # minutes on a slow MTP link. Kept so re-enabling is a one-line change.
+    if False and accessible:                    # noqa: SIM223  (deliberate switch)
+        def validate_in_background():
+            global validation_warnings, validation_in_progress
+            try:
+                warnings = rule_validator.validate_profile_rules(profile)
+                validation_warnings = [w.to_dict() for w in warnings]
+            except Exception as e:
+                print(f"{Colors.WARNING}{Icons.WARN}{Colors.RESET} "
+                      f"Rule validation failed: {e}")
+            finally:
+                validation_in_progress = False
+
+        if not validation_in_progress:
+            validation_in_progress = True
+            threading.Thread(target=validate_in_background, daemon=True).start()
+
+    return jsonify({
+        "connected": True,
+        "accessible": accessible,
+        "device_name": device_info.get("display_name", "Unknown"),
+        "profile_name": profile.get("name", "unknown"),
+        "rule_count": len(profile.get("rules", [])),
+        "validation_warnings": validation_warnings,
+        "validation_in_progress": validation_in_progress
+    })
+
+
+def _detected_devices():
+    """Every connected MTP mount, keyed by its serial fingerprint."""
+    found = []
+    for d in device.enumerate_mtp_mounts():
+        id_type, id_value = device.device_fingerprint(d, verbose=False)
+        found.append({
+            "device_name": d.get("display_name", "Unknown"),
+            "mtp_id": id_value or d.get("activation_uri", ""),
+            "activation_uri": d.get("activation_uri", ""),
+            "default_location": d.get("default_location", ""),
+            "id_type": id_type,
+            "id_value": id_value,
+        })
+    return found
+
 
 @app.route('/api/profiles', methods=['GET', 'POST'])
 def api_profiles():
     """Get all profiles or create a new profile."""
     if request.method == 'POST':
-        # Create a new profile
-        data = request.json
-        profile_name = data.get("name")
-        device_id = data.get("device_id")
-        
+        data = request.get_json(silent=True) or {}
+        profile_name = (data.get("name") or "").strip()
+        device_id = (data.get("device_id") or "").strip()
+
         if not profile_name or not device_id:
             return jsonify({"error": "Profile name and device_id are required"}), 400
-        
+
         config = cfg.load_config()
-        
-        # Check if profile already exists
+
         if cfg.find_profile(config, profile_name):
             return jsonify({"error": f"Profile '{profile_name}' already exists"}), 409
-        
+
         try:
-            # Get connected devices to find the one matching device_id
-            devices = device.enumerate_mtp_mounts()
-            matching_device = None
-            
-            for d in devices:
-                import re
-                activation_uri = d.get("activation_uri", "")
-                mtp_match = re.search(r'mtp://\[([^\]]+)\]', activation_uri)
-                mtp_id = mtp_match.group(1) if mtp_match else activation_uri
-                
-                if mtp_id == device_id:
-                    matching_device = d
-                    break
-            
-            if not matching_device:
-                return jsonify({"error": "Device not found or not connected"}), 404
-            
-            # Get device fingerprint for unique identification
-            id_type, id_value = device.device_fingerprint(matching_device, verbose=False)
-            
-            # Create profile
-            profile = {
-                "name": profile_name,
-                "device": {
-                    "display_name": matching_device.get("display_name", "Unknown Device"),
-                    "id_type": id_type,
-                    "id_value": id_value,
-                    "activation_uri": matching_device.get("activation_uri", "")
-                },
-                "rules": []
-            }
-            
-            cfg.add_profile(config, profile)
-            cfg.save_config(config)
-            
-            return jsonify({"success": True, "message": f"Profile '{profile_name}' created"})
+            matching = next((d for d in _detected_devices()
+                             if d["mtp_id"] == device_id), None)
         except Exception as e:
             return jsonify({"error": str(e)}), 500
-    
+
+        if not matching:
+            return jsonify({"error": "Device not found or not connected"}), 404
+
+        # A device with no serial cannot be recognised again on the next plug-in;
+        # storing an empty fingerprint would match every future device.
+        if not matching["id_type"] or not matching["id_value"]:
+            return jsonify({"error": "Device exposes no serial number; "
+                                     "cannot register it reliably"}), 400
+
+        cfg.add_profile(config, {
+            "name": profile_name,
+            "device": {
+                "display_name": matching["device_name"],
+                "id_type": matching["id_type"],
+                "id_value": matching["id_value"],
+                "activation_uri": matching["activation_uri"],
+            },
+            "rules": []
+        })
+        cfg.save_config(config)
+
+        return jsonify({"success": True, "message": f"Profile '{profile_name}' created"})
+
     # GET: Return all profiles
     config = cfg.load_config()
-    profiles = config.get("profiles", [])
-    
-    # Enrich profiles with rule counts
-    result = []
-    for profile in profiles:
-        result.append({
+    return jsonify([
+        {
             "profile_name": profile.get("name", "unknown"),
             "device_name": profile.get("device", {}).get("display_name", "Unknown"),
-            "mtp_id": profile.get("device", {}).get("mtp_id", "unknown"),
+            "mtp_id": profile.get("device", {}).get("id_value", "unknown"),
             "rules_count": len(profile.get("rules", []))
-        })
-    
-    return jsonify(result)
+        }
+        for profile in config.get("profiles", [])
+    ])
 
 
 @app.route('/api/profiles/<profile_name>/rules')
@@ -300,10 +359,10 @@ def api_profile_rules(profile_name):
     """Get rules for a specific profile."""
     config = cfg.load_config()
     profile = cfg.find_profile(config, profile_name)
-    
+
     if not profile:
         return jsonify({"error": "Profile not found"}), 404
-    
+
     return jsonify({
         "profile": profile_name,
         "rules": profile.get("rules", [])
@@ -313,34 +372,40 @@ def api_profile_rules(profile_name):
 @app.route('/api/rules', methods=['POST'])
 def api_add_rule():
     """Add a new rule."""
-    data = request.json
+    data = request.get_json(silent=True) or {}
     config = cfg.load_config()
-    
+
     profile_name = data.get("profile")
     mode = data.get("mode")
     phone_path = data.get("phone_path")
     desktop_path = data.get("desktop_path")
     manual_only = data.get("manual_only", False)
-    
+
     if not all([profile_name, mode, phone_path, desktop_path]):
         return jsonify({"error": "Missing required fields"}), 400
-    
+
+    # A rule is a path the runner will write to later: confine it like a browse.
+    resolved, error = _resolve_desktop_path(desktop_path)
+    if error:
+        return error
+    desktop_path = str(resolved)
+
     try:
         if mode == "move":
             cfg.add_move_rule(config, profile_name, phone_path, desktop_path, manual_only)
         elif mode == "copy":
             cfg.add_copy_rule(config, profile_name, phone_path, desktop_path, manual_only)
-        elif mode in ["backup", "smart_copy"]:
+        elif mode in ("backup", "smart_copy"):
             cfg.add_backup_rule(config, profile_name, phone_path, desktop_path, manual_only)
         elif mode == "sync":
             cfg.add_sync_rule(config, profile_name, desktop_path, phone_path, manual_only)
         else:
             return jsonify({"error": f"Invalid mode: {mode}"}), 400
-        
+
         cfg.save_config(config)
         return jsonify({"success": True, "message": f"{mode.title()} rule added"})
-    
-    except Exception as e:
+
+    except (ValueError, KeyError, OSError) as e:
         return jsonify({"error": str(e)}), 500
 
 
@@ -348,313 +413,179 @@ def api_add_rule():
 def api_delete_rule(profile_name, rule_id):
     """Delete a rule."""
     config = cfg.load_config()
-    
+
     try:
         cfg.remove_rule(config, profile_name, rule_id)
         cfg.save_config(config)
         return jsonify({"success": True, "message": "Rule deleted"})
-    except Exception as e:
+    except (ValueError, KeyError, OSError) as e:
         return jsonify({"error": str(e)}), 500
+
+
+def _run_worker(dry_run, rule_ids, notify, include_manual, rename_duplicates):
+    """Run the rules, streaming printed lines into the status logs."""
+    logs = current_run_status["logs"]
+    started = datetime.now()
+    result = None
+    failure = None
+
+    try:
+        # ponytail: redirect_stdout is process-global; _run_lock keeps it to one
+        # run at a time. Pass a writer into runner if concurrent runs ever land.
+        with contextlib.redirect_stdout(StreamingOutput(logs)):
+            result = runner.run_for_connected_device(
+                cfg.load_config(),
+                verbose=True,
+                dry_run=dry_run,
+                rule_ids=rule_ids,
+                notify=notify,
+                include_manual=include_manual,
+                rename_duplicates=rename_duplicates,
+            )
+        current_run_status["result"] = result
+        current_run_status["progress"] = 100
+    except Exception as e:                      # a broken run must still report
+        failure = e
+        current_run_status["result"] = None
+        logs.append(f"{Icons.FAIL} Error: {e}")
+    finally:
+        # Clear `running` first: a failure below must not wedge every later run
+        # behind a permanent 409.
+        with _run_lock:
+            current_run_status["running"] = False
+        try:
+            stats = (result or {}).get("stats") or {}
+            run_history.insert(0, {
+                "timestamp": started.isoformat(),
+                "profile": (result or {}).get("profile") or "Unknown",
+                "rules_count": len((result or {}).get("rules") or []),
+                "status": "error" if failure or stats.get("errors", 0) else "success",
+                "dry_run": bool((result or {}).get("dry_run", dry_run)),
+                "stats": stats,
+                "rules": (result or {}).get("rules") or [],
+                "logs": list(logs),
+            })
+            del run_history[100:]
+            save_history()
+        except Exception as e:
+            print(f"{Colors.WARNING}{Icons.WARN}{Colors.RESET} "
+                  f"Failed to record history: {e}")
+
+
+def _tri_state(value):
+    """None means "let each mode keep its own default"; anything else is a bool."""
+    return None if value is None else bool(value)
 
 
 @app.route('/api/run', methods=['POST'])
 def api_run():
     """Execute configured rules."""
-    if current_run_status["running"]:
-        return jsonify({"error": "A run is already in progress"}), 409
-    
-    data = request.json or {}
-    rule_ids = data.get("rule_ids")  # Optional: specific rules to run
-    dry_run = data.get("dry_run", False)
-    include_manual = data.get("include_manual", False)
-    notify = data.get("notify", False)
-    rename_duplicates = data.get("rename_duplicates", True)  # Default to True for backward compatibility
-    
-    # Start run in background thread
-    def run_sync():
-        global current_run_status, run_history
+    data = request.get_json(silent=True) or {}
+
+    with _run_lock:
+        if current_run_status["running"]:
+            return jsonify({"error": "A run is already in progress"}), 409
         current_run_status["running"] = True
         current_run_status["progress"] = 0
         current_run_status["logs"] = []
-        current_run_status["stats"] = {"moved": 0, "backed_up": 0, "synced": 0, "errors": 0}
-        
-        start_time = datetime.now()
-        profile_name = "Unknown"
-        rules_count = 0
-        
-        # Create a custom stdout that captures AND streams output
-        class StreamingOutput:
-            def __init__(self):
-                self.buffer = []
-                
-            def write(self, text):
-                if text and text.strip():
-                    # Strip ANSI color codes for web display
-                    import re
-                    ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
-                    clean_text = ansi_escape.sub('', text)
-                    
-                    # Add each line to logs immediately
-                    for line in clean_text.split('\n'):
-                        if line.strip():
-                            current_run_status["logs"].append(line)
-                            self.buffer.append(line)
-            
-            def flush(self):
-                pass
-                
-            def getvalue(self):
-                return '\n'.join(self.buffer)
-        
-        # Capture stdout to get CLI output
-        old_stdout = sys.stdout
-        sys.stdout = StreamingOutput()
-        
-        try:
-            config = cfg.load_config()
-            profile = runner.detect_connected_device(config, verbose=False)
-            
-            if profile:
-                profile_name = profile.get("name", "Unknown")
-                # Count rules (exclude manual if not included)
-                all_rules = profile.get("rules", [])
-                if not include_manual:
-                    rules_count = len([r for r in all_rules if not r.get("manual_only", False)])
-                else:
-                    rules_count = len(all_rules)
-            
-            # Run with captured output (verbose=True for detailed file info in web UI)
-            runner.run_for_connected_device(
-                config, 
-                verbose=True, 
-                dry_run=dry_run, 
-                rule_ids=rule_ids,
-                notify=notify,
-                include_manual=include_manual,
-                rename_duplicates=rename_duplicates
-            )
-            
-            current_run_status["progress"] = 100
-            status = "success"
-        except Exception as e:
-            import traceback
-            error_msg = f"❌ Error: {str(e)}"
-            current_run_status["logs"].append(error_msg)
-            current_run_status["logs"].append(traceback.format_exc())
-            current_run_status["stats"]["errors"] = current_run_status["stats"].get("errors", 0) + 1
-            status = "error"
-        finally:
-            # Ensure stdout is restored
-            sys.stdout = old_stdout
-            current_run_status["running"] = False
-            
-            # Save to history
-            run_history.insert(0, {
-                "timestamp": start_time.isoformat(),
-                "profile": profile_name,
-                "rules_count": rules_count,
-                "status": status,
-                "stats": dict(current_run_status["stats"]),
-                "logs": list(current_run_status["logs"])
-            })
-            
-            # Keep only last 100 runs
-            if len(run_history) > 100:
-                run_history.pop()
-            
-            # Persist to disk
-            save_history()
-    
-    thread = threading.Thread(target=run_sync, daemon=True)
-    thread.start()
-    
+        current_run_status["result"] = None
+
+    threading.Thread(
+        target=_run_worker,
+        args=(data.get("dry_run", False),
+              data.get("rule_ids"),
+              data.get("notify", False),
+              data.get("include_manual", False),
+              _tri_state(data.get("rename_duplicates"))),
+        daemon=True,
+    ).start()
+
     return jsonify({"success": True, "message": "Run started"})
 
 
 @app.route('/api/run/status')
 def api_run_status():
-    """Get current run status."""
-    # Parse stats from logs
-    stats = {"copied": 0, "skipped": 0, "deleted": 0, "errors": 0, "synced": 0}
-    
-    for log_line in current_run_status.get("logs", []):
-        import re
-        
-        # Parse Copied: X
-        copied_match = re.search(r'Copied:\s*(\d+)', log_line)
-        if copied_match:
-            stats["copied"] = max(stats["copied"], int(copied_match.group(1)))
-        
-        # Parse Skipped: X or Exists: X
-        skipped_match = re.search(r'(?:Skipped|Exists):\s*(\d+)', log_line)
-        if skipped_match:
-            stats["skipped"] = max(stats["skipped"], int(skipped_match.group(1)))
-        
-        # Parse Deleted: X
-        deleted_match = re.search(r'Deleted:\s*(\d+)', log_line)
-        if deleted_match:
-            stats["deleted"] = max(stats["deleted"], int(deleted_match.group(1)))
-        
-        # Parse Synced: X
-        synced_match = re.search(r'Synced:\s*(\d+)', log_line)
-        if synced_match:
-            stats["synced"] = max(stats["synced"], int(synced_match.group(1)))
-        
-        # Parse smart-copy progress
-        progress_match = re.search(r'\[(\d+)/(\d+)\s*-\s*([\d.]+)%\]', log_line)
-        if progress_match:
-            current_run_status["stats"]["smart_copy_current"] = int(progress_match.group(1))
-            current_run_status["stats"]["smart_copy_total"] = int(progress_match.group(2))
-    
-    # Parse errors from logs
-    for log_line in current_run_status.get("logs", []):
-        import re
-        errors_match = re.search(r'(?:Errors|Error):\s*(\d+)', log_line)
-        if errors_match:
-            stats["errors"] = max(stats["errors"], int(errors_match.group(1)))
-    
-    # Return status with parsed stats
-    result = dict(current_run_status)
-    result["stats"] = stats
-    return jsonify(result)
+    """Get current run status: live logs plus the structured result."""
+    return jsonify({
+        "running": current_run_status["running"],
+        "progress": current_run_status["progress"],
+        "logs": list(current_run_status["logs"]),
+        "result": current_run_status["result"],
+    })
 
 
 @app.route('/api/device/detect')
 def api_device_detect():
     """Detect connected MTP devices."""
-    devices = device.enumerate_mtp_mounts()
-    
-    result = []
-    for d in devices:
-        activation_uri = d.get("activation_uri", "")
-        # Extract MTP ID from URI (e.g., "mtp://[usb:003,009]/" -> "usb:003,009")
-        import re
-        mtp_match = re.search(r'mtp://\[([^\]]+)\]', activation_uri)
-        mtp_id = mtp_match.group(1) if mtp_match else activation_uri
-        
-        result.append({
-            "device_name": d.get("display_name", "Unknown"),
-            "mtp_id": mtp_id,
-            "activation_uri": activation_uri,
-            "default_location": d.get("default_location", "")
-        })
-    
-    return jsonify(result)
+    return jsonify([
+        {
+            "device_name": d["device_name"],
+            "mtp_id": d["mtp_id"],
+            "activation_uri": d["activation_uri"],
+            "default_location": d["default_location"],
+        }
+        for d in _detected_devices()
+    ])
 
 
 @app.route('/api/device/unregistered')
 def api_device_unregistered():
     """Detect connected MTP devices that don't have a matching profile."""
-    import re
     config = cfg.load_config()
-    devices = device.enumerate_mtp_mounts()
-    
-    unregistered = []
-    for d in devices:
-        # Get device fingerprint
-        id_type, id_value = device.device_fingerprint(d, verbose=False)
-        
-        # Check if profile exists for this device
-        profile = cfg.find_profile_by_device_id(config, id_type, id_value)
-        if not profile:
-            # Device not registered
-            activation_uri = d.get("activation_uri", "")
-            mtp_match = re.search(r'mtp://\[([^\]]+)\]', activation_uri)
-            mtp_id = mtp_match.group(1) if mtp_match else activation_uri
-            
-            unregistered.append({
-                "device_name": d.get("display_name", "Unknown"),
-                "mtp_id": mtp_id,
-                "activation_uri": activation_uri,
-                "id_type": id_type,
-                "id_value": id_value
-            })
-    
-    return jsonify(unregistered)
-
-
-@app.route('/api/device/register', methods=['POST'])
-def api_device_register():
-    """Register a new device."""
-    data = request.json
-    profile_name = data.get("profile_name")
-    device_name = data.get("device_name")
-    mtp_id = data.get("mtp_id")
-    
-    if not all([profile_name, device_name, mtp_id]):
-        return jsonify({"error": "Missing required fields"}), 400
-    
-    config = cfg.load_config()
-    
-    # Check if profile already exists
-    if cfg.find_profile(config, profile_name):
-        return jsonify({"error": f"Profile '{profile_name}' already exists"}), 409
-    
-    try:
-        # Add profile directly
-        cfg.add_profile(
-            config,
-            profile_name=profile_name,
-            device_name=device_name,
-            mtp_id=mtp_id
-        )
-        cfg.save_config(config)
-        return jsonify({"success": True, "message": f"Device registered as '{profile_name}'"})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    return jsonify([
+        d for d in _detected_devices()
+        if not cfg.find_profile_by_device_id(config, d["id_type"], d["id_value"])
+    ])
 
 
 @app.route('/api/profiles/<profile_name>', methods=['PUT'])
-def api_update_profile(profile_name):
-    """Update a profile (e.g., rename)."""
-    data = request.json
-    new_name = data.get("name")
-    
+def api_rename_profile(profile_name):
+    """Rename a profile."""
+    data = request.get_json(silent=True) or {}
+    new_name = (data.get("name") or "").strip()
+
     if not new_name:
-        return jsonify({"error": "Profile name is required"}), 400
-    
+        return jsonify({"error": "A profile name is required"}), 400
+
     config = cfg.load_config()
     profile = cfg.find_profile(config, profile_name)
-    
+
     if not profile:
         return jsonify({"error": "Profile not found"}), 404
-    
-    # Check if new name already exists (if different from current)
-    if new_name != profile_name:
-        if cfg.find_profile(config, new_name):
-            return jsonify({"error": f"Profile '{new_name}' already exists"}), 409
-    
+
+    if new_name != profile_name and cfg.find_profile(config, new_name):
+        return jsonify({"error": f"Profile '{new_name}' already exists"}), 409
+
+    profile["name"] = new_name
+    cfg.save_config(config)
+
     try:
-        profile["name"] = new_name
-        cfg.save_config(config)
-        return jsonify({"success": True, "message": "Profile updated"})
+        state.rename_profile(profile_name, new_name)
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        print(f"{Colors.WARNING}{Icons.WARN}{Colors.RESET} Failed to carry backup "
+              f"resume state to '{new_name}': {e}")
+
+    return jsonify({"success": True, "message": f"Profile renamed to '{new_name}'"})
 
 
 @app.route('/api/profiles/<profile_name>', methods=['DELETE'])
 def api_delete_profile(profile_name):
     """Delete a profile."""
     config = cfg.load_config()
-    
-    profile = cfg.find_profile(config, profile_name)
-    if not profile:
+
+    if not cfg.find_profile(config, profile_name):
         return jsonify({"error": "Profile not found"}), 404
-    
-    try:
-        config["profiles"] = [p for p in config.get("profiles", []) if p.get("name") != profile_name]
-        cfg.save_config(config)
-        return jsonify({"success": True, "message": "Profile deleted"})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+
+    config["profiles"] = [p for p in config.get("profiles", [])
+                          if p.get("name") != profile_name]
+    cfg.save_config(config)
+    return jsonify({"success": True, "message": "Profile deleted"})
 
 
 @app.route('/api/history')
 def api_history():
     """Get operation history."""
-    limit = request.args.get('limit', 10, type=int)
-    
-    # Return the requested number of history items
+    limit = min(max(request.args.get('limit', 10, type=int), 1), 100)
     return jsonify(run_history[:limit])
 
 
@@ -662,211 +593,181 @@ def api_history():
 def api_browse_phone():
     """Browse phone directories."""
     phone_path = request.args.get('path', '/')
-    
-    # Detect connected device
+
     config = cfg.load_config()
     profile = runner.detect_connected_device(config, verbose=False)
-    
+
     if not profile:
         return jsonify({"error": "No device connected"}), 409
-    
-    device_info = profile.get("device", {})
-    activation_uri = device_info.get("activation_uri", "")
-    
+
+    activation_uri = profile.get("device", {}).get("activation_uri", "")
+
     if not activation_uri:
         return jsonify({"error": "Device activation URI not found"}), 500
-    
+
     # Resolve relative phone paths (sd/, internal/)
     if phone_path.startswith('internal/'):
         phone_path = '/storage/emulated/0/' + phone_path[len('internal/'):]
     elif phone_path.startswith('sd/'):
         # Find the first external SD card path
         try:
-            sd_entries = browser.list_phone_directory(activation_uri, '/storage')
-            for entry in sd_entries:
+            for entry in browser.list_phone_directory(activation_uri, '/storage'):
                 # SD cards typically have names like 'XXXX-XXXX'
                 if entry['is_directory'] and '-' in entry['name'] and entry['name'] != 'emulated':
                     phone_path = '/storage/' + entry['name'] + '/' + phone_path[len('sd/'):]
                     break
         except Exception:
-            # If we can't find SD card, use path as-is
-            pass
-    
+            pass                                # fall through with the path as-is
+
     try:
-        # Use browser.list_phone_directory to get contents
-        entries_raw = browser.list_phone_directory(activation_uri, phone_path)
-        
-        # Transform to API format
-        entries = []
-        for entry in entries_raw:
-            entries.append({
+        entries = [
+            {
                 "name": entry["name"],
                 "path": entry["path"],
                 "type": "dir" if entry["is_directory"] else "file",
                 "size": entry.get("size", 0)
-            })
-        
+            }
+            for entry in browser.list_phone_directory(activation_uri, phone_path)
+        ]
         return jsonify({
             "path": phone_path,
             "entries": entries,
             "deviceConnected": True
         })
-    
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 
 @app.route('/api/folder/create', methods=['POST'])
 def api_create_folder():
-    """Create a new folder on desktop."""
-    import os
-    
-    data = request.json
+    """Create a folder inside an allowed desktop directory."""
+    data = request.get_json(silent=True) or {}
     folder_path = data.get('path')
-    
+
     if not folder_path:
         return jsonify({"error": "Path is required"}), 400
-    
+
+    # The client sends one full path. Traversal segments never belong in it -
+    # reject them outright rather than letting realpath quietly absorb them.
+    if any(part in ('.', '..') for part in str(folder_path).split('/')):
+        return jsonify({"error": "Invalid path"}), 400
+
+    target, error = _resolve_desktop_path(folder_path)
+    if error:
+        return error
+
+    if target.exists():
+        return jsonify({"error": "Folder already exists"}), 409
+
     try:
-        # Normalize and expand path
-        resolved_path = os.path.abspath(os.path.expanduser(folder_path))
-        
-        # Check if already exists
-        if os.path.exists(resolved_path):
-            return jsonify({"error": "Folder already exists"}), 409
-        
-        # Create the folder
-        os.makedirs(resolved_path, exist_ok=False)
-        
-        return jsonify({"success": True, "path": resolved_path})
-    
+        target.mkdir(parents=True)
     except PermissionError:
         return jsonify({"error": "Permission denied"}), 403
-    except Exception as e:
+    except OSError as e:
         return jsonify({"error": str(e)}), 500
+
+    return jsonify({"success": True, "path": str(target)})
 
 
 @app.route('/api/browse/desktop')
 def api_browse_desktop():
-    """Browse desktop directories."""
-    import os
-    from pathlib import Path
-    
-    desktop_path = request.args.get('path', str(Path.home()))
-    
-    # Normalize and resolve path
+    """Browse desktop directories, confined to ALLOWED_ROOTS."""
+    resolved, error = _resolve_desktop_path(request.args.get('path') or str(Path.home()))
+    if error:
+        return error
+
+    if not resolved.exists():
+        return jsonify({"error": "Directory not found"}), 404
+
+    if not resolved.is_dir():
+        return jsonify({"error": "Path is not a directory"}), 400
+
+    entries = []
     try:
-        resolved_path = os.path.abspath(os.path.expanduser(desktop_path))
-        
-        if not os.path.exists(resolved_path):
-            return jsonify({"error": "Directory not found"}), 404
-        
-        if not os.path.isdir(resolved_path):
-            return jsonify({"error": "Path is not a directory"}), 400
-        
-        # List directory contents
-        entries = []
-        try:
-            with os.scandir(resolved_path) as it:
-                for entry in it:
-                    try:
-                        # Check if it's a symlink first
-                        is_symlink = entry.is_symlink()
-                        # Follow symlinks when checking if it's a directory
-                        is_dir = entry.is_dir(follow_symlinks=True)
-                        entries.append({
-                            "name": entry.name,
-                            "path": entry.path,
-                            "type": "dir" if is_dir else "file",
-                            "is_symlink": is_symlink
-                        })
-                    except (PermissionError, OSError):
-                        # Skip entries we can't access
-                        continue
-        except PermissionError:
-            return jsonify({"error": "Permission denied"}), 403
-        
-        # Sort: directories first, then alphabetically
-        entries.sort(key=lambda x: (x["type"] != "dir", x["name"].lower()))
-        
-        # Check if we can go up
-        can_go_up = resolved_path != '/'
-        
-        return jsonify({
-            "path": resolved_path,
-            "entries": entries,
-            "canGoUp": can_go_up
-        })
-    
+        with os.scandir(resolved) as it:
+            for entry in it:
+                try:
+                    is_symlink = entry.is_symlink()
+                    is_dir = entry.is_dir(follow_symlinks=True)
+                except OSError:
+                    continue
+                entries.append({
+                    "name": entry.name,
+                    "path": entry.path,
+                    "type": "dir" if is_dir else "file",
+                    "is_symlink": is_symlink
+                })
     except PermissionError:
         return jsonify({"error": "Permission denied"}), 403
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+
+    entries.sort(key=lambda x: (x["type"] != "dir", x["name"].lower()))
+
+    return jsonify({
+        "path": str(resolved),
+        "entries": entries,
+        "canGoUp": resolved not in ALLOWED_ROOTS
+    })
 
 
 @app.route('/api/bookmarks/<bookmark_type>', methods=['GET'])
 def api_get_bookmarks(bookmark_type):
     """Get bookmarks for desktop or phone."""
-    if bookmark_type not in ['desktop', 'phone']:
+    if bookmark_type not in ('desktop', 'phone'):
         return jsonify({"error": "Invalid bookmark type. Use 'desktop' or 'phone'"}), 400
-    
-    return jsonify({
-        "bookmarks": bookmarks.get(bookmark_type, [])
-    })
+
+    return jsonify({"bookmarks": bookmarks.get(bookmark_type, [])})
 
 
 @app.route('/api/bookmarks/<bookmark_type>', methods=['POST'])
 def api_add_bookmark(bookmark_type):
     """Add a new bookmark."""
-    if bookmark_type not in ['desktop', 'phone']:
+    if bookmark_type not in ('desktop', 'phone'):
         return jsonify({"error": "Invalid bookmark type. Use 'desktop' or 'phone'"}), 400
-    
-    data = request.json
-    name = data.get('name', '').strip()
-    path = data.get('path', '').strip()
-    
+
+    data = request.get_json(silent=True) or {}
+    name = (data.get('name') or '').strip()
+    path = (data.get('path') or '').strip()
+
     if not name or not path:
         return jsonify({"error": "Name and path are required"}), 400
-    
-    # For phone bookmarks, normalize to relative paths if possible
-    if bookmark_type == 'phone':
+
+    if bookmark_type == 'desktop':
+        # A desktop bookmark is a path the browser will later be pointed at.
+        resolved, error = _resolve_desktop_path(path)
+        if error:
+            return error
+        path = str(resolved)
+    else:
         # Convert absolute phone paths to relative storage paths
         if path.startswith('/storage/emulated/0/'):
             path = 'internal/' + path[len('/storage/emulated/0/'):]
         elif path.startswith('/storage/'):
-            # Extract SD card path (e.g., /storage/XXXX-XXXX/...)
             parts = path.split('/', 3)
             if len(parts) >= 3:
                 path = 'sd/' + (parts[3] if len(parts) > 3 else '')
-    
-    bookmark = {
-        "name": name,
-        "path": path
-    }
-    
-    # Check if bookmark already exists
-    for b in bookmarks[bookmark_type]:
-        if b["path"] == path:
-            return jsonify({"error": "Bookmark already exists"}), 409
-    
+
+    if any(b["path"] == path for b in bookmarks[bookmark_type]):
+        return jsonify({"error": "Bookmark already exists"}), 409
+
+    bookmark = {"name": name, "path": path}
     bookmarks[bookmark_type].append(bookmark)
     save_bookmarks()
-    
+
     return jsonify({"success": True, "bookmark": bookmark})
 
 
 @app.route('/api/bookmarks/<bookmark_type>/<int:index>', methods=['DELETE'])
 def api_delete_bookmark(bookmark_type, index):
     """Delete a bookmark."""
-    if bookmark_type not in ['desktop', 'phone']:
+    if bookmark_type not in ('desktop', 'phone'):
         return jsonify({"error": "Invalid bookmark type. Use 'desktop' or 'phone'"}), 400
-    
+
     if index < 0 or index >= len(bookmarks[bookmark_type]):
         return jsonify({"error": "Invalid bookmark index"}), 404
-    
+
     removed = bookmarks[bookmark_type].pop(index)
     save_bookmarks()
-    
+
     return jsonify({"success": True, "removed": removed})
 
 
@@ -879,97 +780,79 @@ test_run_status = {
     "failed_tests": []
 }
 
+_test_lock = threading.Lock()
+
+
+def _test_worker(test_file, project_root):
+    """Stream the edge-case suite's output into test_run_status."""
+    logs = test_run_status["logs"]
+    try:
+        logs.append("Starting edge case test suite...")
+        logs.append(f"Test file: {test_file}")
+
+        process = subprocess.Popen(
+            [sys.executable, str(test_file)],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+            cwd=str(project_root)
+        )
+
+        for line in iter(process.stdout.readline, ''):
+            line = line.rstrip()
+            if not line:
+                continue
+            logs.append(line)
+            if "PASSED" in line:
+                test_run_status["results"]["passed"] += 1
+            elif "FAILED" in line:
+                test_run_status["results"]["failed"] += 1
+                if "TEST" in line:
+                    test_run_status["failed_tests"].append(line)
+            elif "SKIPPED" in line:
+                test_run_status["results"]["skipped"] += 1
+
+        process.wait()
+        logs.append("-" * 70)
+        if process.returncode == 0:
+            logs.append(f"{Icons.OK} All tests completed successfully")
+        else:
+            logs.append(f"{Icons.WARN} Tests completed with exit code "
+                        f"{process.returncode}")
+    except Exception as e:
+        logs.append(f"{Icons.FAIL} Error: {e}")
+    finally:
+        with _test_lock:
+            test_run_status["running"] = False
+        test_run_status["progress"] = 100
+
 
 @app.route('/api/tests/run', methods=['POST'])
 def api_run_tests():
-    """Run the edge case test suite."""
-    global test_run_status
-    
-    if test_run_status["running"]:
-        return jsonify({"error": "Tests are already running"}), 409
-    
-    # Check if device is connected
+    """Run the edge case test suite against the connected device."""
     config = cfg.load_config()
-    profile = runner.detect_connected_device(config, verbose=False)
-    
-    if not profile:
-        return jsonify({"error": "No device connected. Please connect your phone first."}), 400
-    
-    # Start tests in background thread
-    def run_tests():
-        global test_run_status
-        import subprocess
-        import os
-        
+    if not runner.detect_connected_device(config, verbose=False):
+        return jsonify({"error": "No device connected. "
+                                 "Please connect your phone first."}), 400
+
+    project_root = Path(__file__).parent.parent
+    test_file = project_root / "tests" / "test_edge_cases.py"
+    if not test_file.exists():
+        return jsonify({"error": f"Test file not found: {test_file}"}), 404
+
+    with _test_lock:
+        if test_run_status["running"]:
+            return jsonify({"error": "Tests are already running"}), 409
         test_run_status["running"] = True
         test_run_status["progress"] = 0
         test_run_status["logs"] = []
         test_run_status["results"] = {"passed": 0, "failed": 0, "skipped": 0}
         test_run_status["failed_tests"] = []
-        
-        try:
-            # Get the project root directory
-            project_root = Path(__file__).parent.parent
-            test_file = project_root / "tests" / "test_edge_cases.py"
-            
-            if not test_file.exists():
-                test_run_status["logs"].append(f"ERROR: Test file not found: {test_file}")
-                test_run_status["running"] = False
-                return
-            
-            test_run_status["logs"].append("Starting edge case test suite...")
-            test_run_status["logs"].append(f"Test file: {test_file}")
-            test_run_status["logs"].append("")
-            
-            # Run tests with real-time output
-            process = subprocess.Popen(
-                [sys.executable, str(test_file)],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                bufsize=1,
-                cwd=str(project_root)
-            )
-            
-            # Stream output line by line
-            for line in iter(process.stdout.readline, ''):
-                if line:
-                    line = line.rstrip()
-                    test_run_status["logs"].append(line)
-                    
-                    # Parse progress and results from output
-                    if "PASSED" in line:
-                        test_run_status["results"]["passed"] += 1
-                    elif "FAILED" in line:
-                        test_run_status["results"]["failed"] += 1
-                        # Extract test name if possible
-                        if "TEST" in line:
-                            test_run_status["failed_tests"].append(line)
-                    elif "SKIPPED" in line:
-                        test_run_status["results"]["skipped"] += 1
-            
-            process.wait()
-            
-            # Add final summary
-            exit_code = process.returncode
-            test_run_status["logs"].append("")
-            test_run_status["logs"].append("="*70)
-            if exit_code == 0:
-                test_run_status["logs"].append("✅ All tests completed successfully!")
-            else:
-                test_run_status["logs"].append(f"⚠️ Tests completed with exit code {exit_code}")
-            
-        except Exception as e:
-            test_run_status["logs"].append(f"ERROR: {str(e)}")
-            import traceback
-            test_run_status["logs"].append(traceback.format_exc())
-        finally:
-            test_run_status["running"] = False
-            test_run_status["progress"] = 100
-    
-    thread = threading.Thread(target=run_tests, daemon=True)
-    thread.start()
-    
+
+    threading.Thread(target=_test_worker, args=(test_file, project_root),
+                     daemon=True).start()
+
     return jsonify({"success": True, "message": "Tests started"})
 
 
@@ -980,20 +863,20 @@ def api_test_status():
 
 
 def start_web_ui(host='127.0.0.1', port=8080, debug=False):
-    """Start the web UI server."""
-    # Load history and bookmarks from disk on startup
+    """Start the web UI server (blocking)."""
+    ALLOWED_HOSTS.update({f"{host}:{port}", f"localhost:{port}", f"127.0.0.1:{port}"})
     load_history()
     load_bookmarks()
-    
-    print(f"\n{'='*60}")
-    print(f"📱 Phone Migration Tool - Web UI")
-    print(f"{'='*60}\n")
-    print(f"🌐 Server starting on http://{host}:{port}")
-    print(f"   Open this URL in your browser to access the interface\n")
-    print(f"   Press Ctrl+C to stop the server\n")
-    
+
+    print(f"\n{Colors.HEADER}{Colors.BOLD}Phone Migration Tool - Web UI{Colors.RESET}")
+    print(f"{Colors.SEPARATOR}{'-' * 60}{Colors.RESET}")
+    print(f"{Colors.INFO}{Icons.INFO}{Colors.RESET} Server running on "
+          f"{Colors.PATH}http://{host}:{port}{Colors.RESET}")
+    print("   Open this URL in your browser to access the interface")
+    print("   Press Ctrl+C to stop the server\n")
+
     app.run(host=host, port=port, debug=debug, threaded=True)
 
 
 if __name__ == '__main__':
-    start_web_ui(debug=True)
+    start_web_ui()

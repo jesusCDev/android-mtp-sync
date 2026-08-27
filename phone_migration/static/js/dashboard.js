@@ -6,7 +6,7 @@ let deviceStatus = null;
     };
     let pollInterval = null;
     let isRunning = false;
-    let displayedOperations = new Set();
+    let lastResult = null;      // the RunResult of the finished run
     let manualRules = [];
     let selectedRuleIds = [];
     let previewExpanded = false;
@@ -16,18 +16,30 @@ let deviceStatus = null;
     let isValidating = false;  // Track if validation is in progress
     let validationComplete = false;  // Track if validation has completed
     
-    function openAddModalForDevice(deviceName, mtpId, idType, idValue) {
-        // Store device info in window so profiles.js can access it
+    // Device names are phone-reported, so they travel in dataset attributes and
+    // are read back by one delegated listener - never through an inline onclick.
+    let unregisteredDevice = null;
+    
+    function registerDetectedDevice() {
+        if (!unregisteredDevice) return;
         window.prefilledDevice = {
-            name: deviceName,
-            mtp_id: mtpId,
-            id_type: idType,
-            id_value: idValue
+            name: unregisteredDevice.device_name,
+            mtp_id: unregisteredDevice.mtp_id,
+            id_type: unregisteredDevice.id_type,
+            id_value: unregisteredDevice.id_value
         };
-        
-        // Navigate to profiles page and open modal
         window.location.href = '/profiles';
     }
+    
+    document.getElementById('device-status').addEventListener('click', (event) => {
+        if (event.target.closest('[data-register-device]')) {
+            registerDetectedDevice();
+        } else if (event.target.closest('[data-mtp-help]')) {
+            event.preventDefault();
+            showInfo('Close other file managers: killall nemo dolphin nautilus pcmanfm thunar, '
+                     + 'then systemctl --user restart gvfs-daemon, then reconnect your phone.');
+        }
+    });
     
     async function loadDeviceStatus() {
         try {
@@ -72,8 +84,8 @@ let deviceStatus = null;
                     <div style="display: flex; align-items: center; gap: 10px;">
                         <i class="fas fa-info-circle" style="color: #ffc107; font-size: 16px;"></i>
                         <span style="color: #ffc107; font-size: 13px;">
-                            <strong>⚠️ MTP Limitation:</strong> Close all file managers (Nemo, Dolphin, etc.) before using this tool. Only one app can access your phone at a time.
-                            <a href="#" onclick="alert('To fix:\n1. killall nemo dolphin nautilus pcmanfm thunar\n2. systemctl --user restart gvfs-daemon\n3. Reconnect your phone'); return false;" style="color: #ffc107; text-decoration: underline; margin-left: 8px;">How to fix →</a>
+                            <strong>MTP Limitation:</strong> Close all file managers (Nemo, Dolphin, etc.) before using this tool. Only one app can access your phone at a time.
+                            <a href="#" data-mtp-help style="color: #ffc107; text-decoration: underline; margin-left: 8px;">How to fix</a>
                         </span>
                     </div>
                 </div>
@@ -89,7 +101,7 @@ let deviceStatus = null;
                         <div style="background: rgba(157, 212, 255, 0.15); border: 1.5px solid var(--info); border-radius: var(--radius-card); padding: 14px; margin-bottom: 16px;">
                             <div style="display: flex; align-items: center; gap: 12px;">
                                 <div class="spinner" style="width: 16px; height: 16px; border-width: 2px;"></div>
-                                <span style="color: var(--info); font-weight: 600; font-size: 14px;">🔍 Validating Rules...</span>
+                                <span style="color: var(--info); font-weight: 600; font-size: 14px;"><i class="fas fa-search"></i> Validating Rules...</span>
                             </div>
                             <div style="margin-top: 8px; font-size: 12px; color: #94a3b8;">
                                 Checking if all configured paths exist and are accessible. Operations are blocked until validation completes.
@@ -104,19 +116,19 @@ let deviceStatus = null;
                         <div style="background: rgba(255, 214, 153, 0.15); border: 1.5px solid var(--warning); border-radius: var(--radius-card); padding: 14px; margin-bottom: 16px;">
                             <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
                                 <i class="fas fa-exclamation-triangle" style="color: var(--warning); font-size: 16px;"></i>
-                                <span style="color: var(--warning); font-weight: 600; font-size: 14px;">⚠️ Rule Configuration Issues (${status.validation_warnings.length})</span>
+                                <span style="color: var(--warning); font-weight: 600; font-size: 14px;">Rule Configuration Issues (${status.validation_warnings.length})</span>
                             </div>
                             <div style="display: flex; flex-direction: column; gap: 8px;">
                     `;
                     
                     status.validation_warnings.forEach(warning => {
-                        const icon = warning.type.includes('phone') ? '📱' : '💻';
+                        const icon = (warning.type || '').includes('phone') ? 'fa-mobile-alt' : 'fa-desktop';
                         statusHtml += `
                             <div style="background: rgba(255, 214, 153, 0.1); border-radius: 6px; padding: 8px 10px; font-size: 13px;">
                                 <div style="color: #ffc107; font-weight: 500; margin-bottom: 4px;">
-                                    ${icon} Rule ${warning.rule_id} (${warning.rule_mode.toUpperCase()})
+                                    <i class="fas ${icon}"></i> Rule ${escapeHtml(warning.rule_id)} (${escapeHtml(String(warning.rule_mode || '').toUpperCase())})
                                 </div>
-                                <div style="color: #cbd5e1; font-size: 12px;">${warning.message}</div>
+                                <div style="color: #cbd5e1; font-size: 12px;">${escapeHtml(warning.message)}</div>
                             </div>
                         `;
                     });
@@ -137,15 +149,15 @@ let deviceStatus = null;
                     <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; color: #94a3b8;">
                         <div style="display: flex; flex-direction: column; gap: 4px;">
                             <span style="font-size: 12px; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px;">Device</span>
-                            <span style="font-size: 15px; color: #cbd5e1; font-weight: 500;">${status.device_name}</span>
+                            <span style="font-size: 15px; color: #cbd5e1; font-weight: 500;">${escapeHtml(status.device_name)}</span>
                         </div>
                         <div style="display: flex; flex-direction: column; gap: 4px;">
                             <span style="font-size: 12px; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px;">Profile</span>
-                            <span style="font-size: 15px; color: #cbd5e1; font-weight: 500;">${status.profile_name}</span>
+                            <span style="font-size: 15px; color: #cbd5e1; font-weight: 500;">${escapeHtml(status.profile_name)}</span>
                         </div>
                         <div style="display: flex; flex-direction: column; gap: 4px;">
                             <span style="font-size: 12px; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px;">Rules</span>
-                            <span style="font-size: 15px; color: #cbd5e1; font-weight: 500;">${status.rule_count} configured</span>
+                            <span style="font-size: 15px; color: #cbd5e1; font-weight: 500;">${escapeHtml(status.rule_count)} configured</span>
                         </div>
                     </div>
                 `;
@@ -158,7 +170,7 @@ let deviceStatus = null;
                             <span style="color: #ff6b6b; font-weight: 600; font-size: 15px;">Device Connected But Not Accessible</span>
                         </div>
                         <p style="color: #cbd5e1; margin: 8px 0; font-size: 14px;">
-                            <strong>Device:</strong> ${status.device_name} (${status.profile_name})
+                            <strong>Device:</strong> ${escapeHtml(status.device_name)} (${escapeHtml(status.profile_name)})
                         </p>
                         <p style="color: #94a3b8; margin: 8px 0 12px 0; font-size: 13px;">
                             The device is detected but its filesystem cannot be accessed. This usually means:
@@ -182,7 +194,7 @@ let deviceStatus = null;
                 try {
                     const unregistered = await apiGet('/api/device/unregistered');
                     if (unregistered.length > 0) {
-                        const device = unregistered[0];
+                        unregisteredDevice = unregistered[0];
                         statusHtml = `
                             <div style="background: rgba(255, 214, 153, 0.15); border: 1.5px solid var(--warning); border-radius: var(--radius-card); padding: 16px; margin-bottom: 16px;">
                                 <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px;">
@@ -190,12 +202,12 @@ let deviceStatus = null;
                                     <span style="color: var(--warning); font-weight: 600; font-size: 15px;">Device Connected But Not Registered</span>
                                 </div>
                                 <p style="color: #cbd5e1; margin: 8px 0; font-size: 14px;">
-                                    <strong>Device:</strong> ${device.device_name}
+                                    <strong>Device:</strong> ${escapeHtml(unregisteredDevice.device_name)}
                                 </p>
                                 <p style="color: #94a3b8; margin: 8px 0 12px 0; font-size: 13px;">
                                     This device needs to be registered as a profile to use the sync tool.
                                 </p>
-                                <button onclick="openAddModalForDevice('${device.device_name}', '${device.mtp_id}', '${device.id_type}', '${device.id_value}')" class="btn btn-small" style="background: var(--warning); color: #1e293b;">
+                                <button data-register-device class="btn btn-small" style="background: var(--warning); color: #1e293b;">
                                     <i class="fas fa-plus"></i> Register Device
                                 </button>
                             </div>
@@ -232,21 +244,10 @@ let deviceStatus = null;
         } catch (error) {
             document.getElementById('device-status').innerHTML = `
                 <div class="alert alert-danger">
-                    Error loading device status: ${error.message}
+                    Error loading device status: ${escapeHtml(error.message)}
                 </div>
             `;
         }
-    }
-    
-    function showAlert(message, type = 'success') {
-        const alertDiv = document.createElement('div');
-        alertDiv.className = `alert alert-${type}`;
-        alertDiv.textContent = message;
-        
-        const container = document.getElementById('alert-container');
-        container.appendChild(alertDiv);
-        
-        setTimeout(() => alertDiv.remove(), 5000);
     }
     
     function toggleOption(option) {
@@ -339,14 +340,14 @@ let deviceStatus = null;
             html += `
                 <div class="command-warning">
                     <i class="fas fa-exclamation-triangle command-warning-icon"></i>
-                    <span style="color: var(--warning);"><strong>⚡ This will EXECUTE operations.</strong> Files will be moved, copied, or synced.</span>
+                    <span style="color: var(--warning);"><strong>This will EXECUTE operations.</strong> Files will be moved, copied, or synced.</span>
                 </div>
             `;
         } else {
             html += `
                 <div style="background: rgba(96, 165, 250, 0.1); border: 1px solid rgba(96, 165, 250, 0.3); border-radius: var(--radius-card); padding: 12px; margin-top: 12px; font-size: 13px;">
                     <i class="fas fa-eye" style="color: var(--info); margin-right: 8px;"></i>
-                    <span style="color: var(--info);"><strong>👁️ Preview mode.</strong> No files will be modified.</span>
+                    <span style="color: var(--info);"><strong>Preview mode.</strong> No files will be modified.</span>
                 </div>
             `;
         }
@@ -364,7 +365,7 @@ let deviceStatus = null;
         
         try {
             // Load rules for the current profile
-            const data = await apiGet(`/api/profiles/${deviceStatus.profile_name}/rules`);
+            const data = await apiGet(`/api/profiles/${encodeURIComponent(deviceStatus.profile_name)}/rules`);
             allRules = data.rules || [];
             
             let rulesToShow = [];
@@ -421,22 +422,21 @@ let deviceStatus = null;
             
             previewContent.innerHTML = optionsHtml + rulesToShow.map(rule => {
                 const modeClass = rule.mode || 'unknown';
-                const modeIcon = getModeIcon(modeClass);
                 return `
                     <div style="background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1); border-radius: 6px; padding: 12px; margin-bottom: 8px;">
                         <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px;">
-                            <span class="operation-mode ${modeClass}" style="font-size: 11px; padding: 3px 8px;">
-                                <i class="fas fa-${modeIcon}"></i> ${rule.mode.toUpperCase()}
+                            <span class="operation-mode ${escapeHtml(modeClass)}" style="font-size: 11px; padding: 3px 8px;">
+                                <i class="fas fa-${getModeIcon(modeClass)}"></i> ${escapeHtml(getModeLabel(modeClass))}
                             </span>
-                            <span style="font-size: 12px; color: var(--text-muted); font-family: monospace;">${rule.id}</span>
+                            <span style="font-size: 12px; color: var(--text-muted); font-family: monospace;">${escapeHtml(rule.id)}</span>
                         </div>
                         <div style="font-size: 12px; color: var(--text); display: flex; align-items: center; gap: 8px;">
                             <i class="fas fa-mobile-alt" style="width: 14px; color: var(--info);"></i>
-                            <span style="flex: 1; overflow: hidden; text-overflow: ellipsis;">${rule.phone_path}</span>
+                            <span style="flex: 1; overflow: hidden; text-overflow: ellipsis;">${escapeHtml(rule.phone_path)}</span>
                         </div>
                         <div style="font-size: 12px; color: var(--text); display: flex; align-items: center; gap: 8px; margin-top: 4px;">
                             <i class="fas fa-desktop" style="width: 14px; color: var(--success);"></i>
-                            <span style="flex: 1; overflow: hidden; text-overflow: ellipsis;">${rule.desktop_path}</span>
+                            <span style="flex: 1; overflow: hidden; text-overflow: ellipsis;">${escapeHtml(rule.desktop_path)}</span>
                         </div>
                     </div>
                 `;
@@ -523,17 +523,17 @@ let deviceStatus = null;
         // Clear previous results and show cards immediately
         document.getElementById('stats-card').style.display = 'block';
         document.getElementById('output-card').style.display = 'block';
-        document.getElementById('stat-copied').textContent = '0';
-        document.getElementById('stat-skipped').textContent = '0';
-        document.getElementById('stat-deleted').textContent = '0';
-        document.getElementById('stat-errors').textContent = '0';
-        document.getElementById('smart-copy-progress').style.display = 'none';
-        document.getElementById('operations-container').innerHTML = '';
-        displayedOperations.clear();
+        ['copied', 'skipped', 'deleted', 'errors'].forEach(key => {
+            document.getElementById(`stat-${key}`).textContent = '0';
+        });
+        lastResult = null;
+        document.getElementById('operations-container').innerHTML =
+            '<pre class="run-log" id="run-log"></pre>';
         
         // Command preview already showing and updated
         
         updateRunStatus('running', 'Running auto rules...');
+        setOperationPhase(options.dry_run ? 'Dry Run - Preview Only' : 'Executing Operations');
         document.getElementById('manual-selection-card').style.display = 'none';
         
         try {
@@ -596,23 +596,23 @@ let deviceStatus = null;
         statusText.textContent = `Processing ${rulesToShow.length} rule${rulesToShow.length !== 1 ? 's' : ''}...`;
         
         // Build rules progress list
-        rulesList.innerHTML = rulesToShow.map((rule, index) => `
-            <div class="rule-progress-item pending" id="rule-progress-${rule.id}">
+        rulesList.innerHTML = rulesToShow.map(rule => `
+            <div class="rule-progress-item pending" data-rule-progress="${escapeHtml(rule.id)}">
                 <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 8px;">
                     <div class="rule-status-icon" style="width: 24px; height: 24px; display: flex; align-items: center; justify-content: center;">
                         <i class="fas fa-clock" style="color: var(--text-muted);"></i>
                     </div>
                     <div style="flex: 1;">
                         <div style="font-weight: 600; font-size: 14px; color: var(--text);">
-                            <span class="operation-mode ${rule.mode}" style="font-size: 11px; padding: 3px 8px; margin-right: 8px;">
-                                <i class="fas fa-${getModeIcon(rule.mode)}"></i> ${rule.mode.toUpperCase()}
+                            <span class="operation-mode ${escapeHtml(rule.mode)}" style="font-size: 11px; padding: 3px 8px; margin-right: 8px;">
+                                <i class="fas fa-${getModeIcon(rule.mode)}"></i> ${escapeHtml(getModeLabel(rule.mode))}
                             </span>
-                            ${rule.id}
+                            ${escapeHtml(rule.id)}
                         </div>
                         <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
-                            <i class="fas fa-mobile-alt" style="color: #0ea5e9;"></i> ${rule.phone_path}
+                            <i class="fas fa-mobile-alt" style="color: #0ea5e9;"></i> ${escapeHtml(rule.phone_path)}
                             <i class="fas fa-arrow-right" style="margin: 0 6px; color: var(--text-muted);"></i>
-                            <i class="fas fa-desktop" style="color: #10b981;"></i> ${rule.desktop_path}
+                            <i class="fas fa-desktop" style="color: #10b981;"></i> ${escapeHtml(rule.desktop_path)}
                         </div>
                     </div>
                 </div>
@@ -625,21 +625,19 @@ let deviceStatus = null;
     }
     
     function updateRuleProgress(ruleId, status, stats) {
-        const item = document.getElementById(`rule-progress-${ruleId}`);
+        const item = [...document.querySelectorAll('[data-rule-progress]')]
+            .find(el => el.dataset.ruleProgress === String(ruleId));
         if (!item) return;
         
         const icon = item.querySelector('.rule-status-icon i');
-        const progressBar = item.querySelector('.rule-progress-bar');
         const progressFill = item.querySelector('.rule-progress-fill');
         const statsDiv = item.querySelector('.rule-stats');
         
-        // Update status
         item.className = `rule-progress-item ${status}`;
         
         if (status === 'running') {
             icon.className = 'fas fa-sync fa-spin';
             icon.style.color = '#0ea5e9';
-            if (progressBar) progressBar.style.display = 'block';
         } else if (status === 'completed') {
             icon.className = 'fas fa-check-circle';
             icon.style.color = '#10b981';
@@ -649,22 +647,25 @@ let deviceStatus = null;
             icon.style.color = '#ef4444';
         }
         
-        // Update stats if provided
-        if (stats && statsDiv) {
-            const statItems = [];
-            if (stats.copied > 0) statItems.push(`✓ ${stats.copied} copied`);
-            if (stats.skipped > 0) statItems.push(`⏭ ${stats.skipped} skipped`);
-            if (stats.deleted > 0) statItems.push(`🗑 ${stats.deleted} deleted`);
-            if (statItems.length > 0) {
-                statsDiv.textContent = statItems.join(' • ');
-                statsDiv.style.display = 'block';
-            }
+        // Stats come from the RunResult, so they are counts - not parsed text.
+        const parts = STAT_LABELS
+            .filter(([key]) => (stats || {})[key] > 0)
+            .map(([key, label]) => `${stats[key]} ${label}`);
+        if (parts.length && statsDiv) {
+            statsDiv.textContent = parts.join(' | ');
+            statsDiv.style.display = 'block';
         }
-        
-        // Update progress fill based on stats
-        if (stats && progressFill && stats.total) {
-            const progress = ((stats.copied || 0) + (stats.skipped || 0)) / stats.total * 100;
-            progressFill.style.width = Math.min(progress, 100) + '%';
+    }
+    
+    // The rules list is built pending; the finished RunResult settles each one.
+    function applyResultToProgress(result) {
+        const rules = (result && result.rules) || [];
+        rules.forEach(rule => {
+            updateRuleProgress(rule.id, rule.error ? 'error' : 'completed', rule.stats);
+        });
+        const statusText = document.getElementById('operation-status-text');
+        if (statusText) {
+            statusText.textContent = `Finished ${rules.length} rule${rules.length !== 1 ? 's' : ''}`;
         }
     }
     
@@ -675,110 +676,9 @@ let deviceStatus = null;
         }
     }
     
-    function updateProgressFromLogs(logs) {
-        const fullLog = logs.join('\n');
+    function setOperationPhase(text) {
         const phaseText = document.getElementById('operation-phase-text');
-        
-        // Detect phases
-        if (fullLog.includes('[DRY RUN MODE]') || fullLog.includes('DRY RUN')) {
-            if (phaseText) phaseText.textContent = 'Dry Run - Safety Check';
-        } else if (fullLog.includes('Analyzing dry-run') || fullLog.includes('Safety check')) {
-            if (phaseText) phaseText.textContent = 'Safety Analysis';
-        } else if (fullLog.includes('All safety checks passed')) {
-            if (phaseText) phaseText.textContent = 'Executing Operations';
-        }
-        
-        const lines = fullLog.split('\n');
-        let currentRuleId = null;
-        let currentMode = null;
-        let currentStats = {};
-        
-        for (let line of lines) {
-            line = line.trim();
-            
-            // Detect rule start: "Move: /path/to/source → /path/to/dest"
-            const opMatch = line.match(/^[\p{Emoji}\u2192🔄-]*\s*(Move|Copy|Smart Copy|Sync|Backup):\s*(.+?)\s*[→\->=>]+\s*(.+)$/u);
-            if (opMatch) {
-                // Mark previous rule as completed if we found a new operation
-                if (currentRuleId) {
-                    updateRuleProgress(currentRuleId, 'completed', currentStats);
-                }
-                
-                const [_, mode, source, dest] = opMatch;
-                currentMode = mode.trim();
-                
-                // Try to match this to a rule ID by comparing paths
-                // Match by exact phone_path or desktop_path to avoid false matches
-                currentRuleId = null;
-                if (allRules && allRules.length > 0) {
-                    const sourceClean = source.trim();
-                    const destClean = dest.trim();
-                    
-                    for (const rule of allRules) {
-                        // Check if mode matches
-                        const ruleMode = rule.mode.toLowerCase().replace(' ', '_').replace('smart_copy', 'backup');
-                        const lineMode = currentMode.toLowerCase().replace(' ', '_');
-                        if (ruleMode !== lineMode) continue;
-                        
-                        // For sync/backup: desktop → phone, so source is desktop
-                        // For move/copy: phone → desktop, so source is phone
-                        let pathMatch = false;
-                        if (rule.mode === 'sync') {
-                            // Sync: desktop → phone
-                            pathMatch = destClean.endsWith(rule.phone_path) || sourceClean.endsWith(rule.desktop_path.split('/').pop() || rule.desktop_path);
-                        } else if (rule.mode === 'move' || rule.mode === 'copy') {
-                            // Move/Copy: phone → desktop
-                            pathMatch = sourceClean.endsWith(rule.phone_path) || destClean.includes(rule.desktop_path);
-                        } else if (rule.mode === 'backup' || rule.mode === 'smart_copy') {
-                            // Backup: phone → desktop
-                            pathMatch = sourceClean.endsWith(rule.phone_path) || destClean.includes(rule.desktop_path);
-                        }
-                        
-                        if (pathMatch) {
-                            currentRuleId = rule.id;
-                            updateRuleProgress(currentRuleId, 'running', currentStats);
-                            break;
-                        }
-                    }
-                }
-                currentStats = {};
-                continue;
-            }
-            
-            // Parse stats for current rule
-            if (currentRuleId) {
-                const copiedMatch = line.match(/✓\s+Copied:\s*(\d+)/);
-                const skippedMatch = line.match(/⊙\s+Skipped:\s*(\d+)/);
-                const deletedMatch = line.match(/×\s+Deleted:\s*(\d+)/);
-                const syncedMatch = line.match(/✓\s+Synced:\s*(\d+)/);
-                const cleanedMatch = line.match(/Cleaned:\s*(\d+)/);
-                const noChangesMatch = line.match(/No changes/);
-                
-                if (copiedMatch) currentStats.copied = parseInt(copiedMatch[1]);
-                if (skippedMatch) currentStats.skipped = parseInt(skippedMatch[1]);
-                if (deletedMatch) currentStats.deleted = parseInt(deletedMatch[1]);
-                if (syncedMatch) currentStats.synced = parseInt(syncedMatch[1]);
-                if (cleanedMatch) currentStats.cleaned = parseInt(cleanedMatch[1]);
-                
-                // Detect completion - any summary line with stats means rule finished
-                const isSummaryLine = line.match(/^[✓⊙×]\s+(Copied|Synced|Skipped):/i) || noChangesMatch;
-                
-                if (isSummaryLine) {
-                    // This rule is done - mark as completed
-                    updateRuleProgress(currentRuleId, 'completed', currentStats);
-                    currentRuleId = null;
-                    currentStats = {};
-                } else if (Object.keys(currentStats).length > 0) {
-                    // Update progress while running
-                    updateRuleProgress(currentRuleId, 'running', currentStats);
-                }
-            }
-        }
-        
-        // Mark the last rule as completed if still active
-        if (currentRuleId) {
-            updateRuleProgress(currentRuleId, 'completed', currentStats);
-        }
+        if (phaseText) phaseText.textContent = text;
     }
     
     function saveOperationState() {
@@ -799,9 +699,12 @@ let deviceStatus = null;
                 selectedRuleIds = JSON.parse(savedRuleIds);
             }
             
-            // Show appropriate UI state
+            // Show appropriate UI state. The log pane has to exist before
+            // polling starts, or a restored run streams into nothing.
             document.getElementById('stats-card').style.display = 'block';
             document.getElementById('output-card').style.display = 'block';
+            document.getElementById('operations-container').innerHTML =
+                '<pre class="run-log" id="run-log"></pre>';
             
             if (operationType === 'manual') {
                 updateRunStatus('running', `Running ${selectedRuleIds.length} manual rule(s)...`);
@@ -843,43 +746,24 @@ let deviceStatus = null;
             try {
                 const status = await apiGet('/api/run/status');
                 
-                if (status.stats) {
-                    document.getElementById('stat-copied').textContent = status.stats.copied || 0;
-                    document.getElementById('stat-skipped').textContent = status.stats.skipped || 0;
-                    document.getElementById('stat-deleted').textContent = status.stats.deleted || 0;
-                    document.getElementById('stat-errors').textContent = status.stats.errors || 0;
-                    
-                    // Show smart-copy progress if available
-                    if (status.stats.smart_copy_total && status.stats.smart_copy_current !== undefined) {
-                        const total = status.stats.smart_copy_total;
-                        const current = status.stats.smart_copy_current;
-                        const percent = (current / total) * 100;
-                        const remaining = total - current;
-                        
-                        document.getElementById('smart-copy-progress').style.display = 'block';
-                        document.getElementById('smart-copy-current').textContent = `Processing: ${current}/${total} files (${remaining} remaining) - ${percent.toFixed(1)}%`;
-                        document.getElementById('smart-copy-bar').style.width = percent + '%';
-                    } else {
-                        document.getElementById('smart-copy-progress').style.display = 'none';
-                    }
-                }
-                
-                if (status.logs && status.logs.length > 0) {
-                    parseAndDisplayOperations(status.logs);
-                    updateProgressFromLogs(status.logs);
-                }
+                showLiveLog(status.logs || []);
                 
                 if (!status.running && isRunning) {
                     stopPolling();
-                    const hasErrors = status.stats && status.stats.errors > 0;
-                    updateRunStatus(hasErrors ? 'error' : 'success', 
-                                   hasErrors ? 'Completed with errors' : 'Completed successfully!');
+                    lastResult = status.result;
+                    renderResult(status.result, status.logs || []);
+                    applyResultToProgress(status.result);
                     
-                    // NOW show stats and operations after completion
+                    const errors = (status.result && status.result.stats
+                                    && status.result.stats.errors) || 0;
+                    const failed = !status.result || errors > 0;
+                    updateRunStatus(failed ? 'error' : 'success',
+                                    failed ? 'Completed with errors' : 'Completed successfully');
+                    
                     document.getElementById('stats-card').style.display = 'block';
                     document.getElementById('output-card').style.display = 'block';
                     
-                    // Clear session state when operation completes
+                    // Clear session state when the operation completes
                     sessionStorage.removeItem('isRunning');
                     sessionStorage.removeItem('operationType');
                     sessionStorage.removeItem('selectedRuleIds');
@@ -898,147 +782,179 @@ let deviceStatus = null;
         }
     }
     
-    let currentOperationLogs = [];
+    const ACTION_ICONS = {
+        copied: 'fa-copy',
+        moved: 'fa-arrow-right',
+        synced: 'fa-sync',
+        deleted: 'fa-trash',
+        skipped: 'fa-forward',
+        renamed: 'fa-pen',
+        failed: 'fa-exclamation-triangle',
+        folder: 'fa-folder'
+    };
     
-    function parseAndDisplayOperations(logs) {
-        currentOperationLogs = logs; // Store for detail view
-        const container = document.getElementById('operations-container');
-        const fullLog = logs.join('\n');
-        const isDryRun = fullLog.includes('[DRY RUN MODE');
-        const lines = fullLog.split('\n');
-        let currentOp = null;
-        let operationLog = []; // Collect lines for current operation
+    const STAT_LABELS = [
+        ['copied', 'copied', 'fa-check', 'var(--success)'],
+        ['moved', 'moved', 'fa-arrow-right', 'var(--info)'],
+        ['synced', 'synced', 'fa-sync', 'var(--info)'],
+        ['backed_up', 'backed up', 'fa-save', 'var(--success)'],
+        ['renamed', 'renamed', 'fa-pen', 'var(--warning)'],
+        ['skipped', 'skipped', 'fa-forward', 'var(--text-muted)'],
+        ['deleted', 'deleted', 'fa-trash', 'var(--danger)'],
+        ['resumed', 'already backed up', 'fa-redo', 'var(--info)'],
+        ['folders', 'folders', 'fa-folder', 'var(--text-muted)'],
+        ['errors', 'errors', 'fa-times-circle', 'var(--danger)']
+    ];
+    
+    function showLiveLog(logs) {
+        const log = document.getElementById('run-log');
+        if (!log) return;
         
-        for (let line of lines) {
-            line = line.trim();
-            if (!line || line.match(/^[=]+$/)) continue;
-            
-            const opMatch = line.match(/^[\p{Emoji}\u2192🔄-]*\s*(Move|Copy|Smart Copy|Sync):\s*(.+?)\s*[→\->=>]+\s*(.+)$/u);
-            if (opMatch) {
-                if (currentOp) {
-                    currentOp.logLines = operationLog; // Store logs for this operation
-                    displayOperation(container, currentOp, isDryRun);
-                }
-                const [_, mode, source, dest] = opMatch;
-                currentOp = {
-                    mode: mode.trim(),
-                    source: source.trim(),
-                    dest: dest.trim(),
-                    stats: {},
-                    logLines: []
-                };
-                operationLog = []; // Reset for new operation
-                continue;
-            }
-            
-            if (currentOp) {
-                // Store all lines for this operation
-                operationLog.push(line);
-                
-                // Existing stats matching
-                const copiedMatch = line.match(/Copied:\s*(\d+)/);
-                const skippedMatch = line.match(/Skipped:\s*(\d+)/);
-                const deletedMatch = line.match(/Deleted:\s*(\d+)/);
-                const syncedMatch = line.match(/Synced:\s*(\d+)/);
-                const resumedMatch = line.match(/Resumed:\s*(\d+)/);
-                const failedMatch = line.match(/Failed:\s*(\d+)/);
-                
-                if (copiedMatch) currentOp.stats.copied = parseInt(copiedMatch[1]);
-                if (skippedMatch) currentOp.stats.skipped = parseInt(skippedMatch[1]);
-                if (deletedMatch) currentOp.stats.deleted = parseInt(deletedMatch[1]);
-                if (syncedMatch) currentOp.stats.synced = parseInt(syncedMatch[1]);
-                if (resumedMatch) currentOp.stats.resumed = parseInt(resumedMatch[1]);
-                if (failedMatch) currentOp.stats.failed = parseInt(failedMatch[1]);
-                
-                // New: Progress tracking for smart-copy
-                const totalMatch = line.match(/Total files:\s*(\d+)/);
-                const progressMatch = line.match(/Progress:\s*(\d+)\/(\d+)/);
-                const percentMatch = line.match(/(\d+(?:\.\d+)?)%/);
-                
-                if (totalMatch) currentOp.stats.total = parseInt(totalMatch[1]);
-                if (progressMatch) {
-                    currentOp.stats.current = parseInt(progressMatch[1]);
-                    currentOp.stats.total = parseInt(progressMatch[2]);
-                }
-                if (percentMatch) currentOp.stats.percent = parseFloat(percentMatch[1]);
-            }
-        }
-        
-        if (currentOp) {
-            currentOp.logLines = operationLog;
-            displayOperation(container, currentOp, isDryRun);
-        }
-        
-        if (container.children.length === 0 && fullLog.includes('No changes needed')) {
-            container.innerHTML = `
-                <div style="text-align: center; padding: 40px; color: var(--text-muted);">
-                    <i class="fas fa-check-circle" style="font-size: 48px; color: var(--success); margin-bottom: 16px;"></i>
-                    <h3 style="color: var(--text);">No Changes Needed</h3>
-                    <p>All files are already in sync</p>
-                </div>
-            `;
-        }
+        // Raw CLI output: textContent, never innerHTML.
+        log.textContent = logs.join('\n');
+        log.scrollTop = log.scrollHeight;
     }
     
-    function displayOperation(container, op, isDryRun) {
-        const opKey = `${op.mode}-${op.source}-${op.dest}`;
-        if (displayedOperations.has(opKey)) return;
-        displayedOperations.add(opKey);
-        
-        const modeClass = op.mode.toLowerCase().replace(' ', '_');
-        const opId = `op-${displayedOperations.size}`;
-        let statsHtml = '';
-        if (op.stats.copied > 0) statsHtml += `<div style="display: flex; align-items: center; gap: 6px;"><i class="fas fa-check" style="color: var(--success);"></i> <span>${op.stats.copied} copied</span></div>`;
-        if (op.stats.skipped > 0) statsHtml += `<div style="display: flex; align-items: center; gap: 6px;"><i class="fas fa-forward" style="color: var(--text-muted);"></i> <span>${op.stats.skipped} skipped</span></div>`;
-        if (op.stats.deleted > 0) statsHtml += `<div style="display: flex; align-items: center; gap: 6px;"><i class="fas fa-trash" style="color: var(--danger);"></i> <span>${op.stats.deleted} deleted</span></div>`;
-        if (op.stats.synced > 0) statsHtml += `<div style="display: flex; align-items: center; gap: 6px;"><i class="fas fa-sync" style="color: var(--info);"></i> <span>${op.stats.synced} synced</span></div>`;
-        if (op.stats.resumed > 0) statsHtml += `<div style="display: flex; align-items: center; gap: 6px;"><i class="fas fa-redo" style="color: var(--info);"></i> <span>${op.stats.resumed} resumed</span></div>`;
-        if (op.stats.failed > 0) statsHtml += `<div style="display: flex; align-items: center; gap: 6px;"><i class="fas fa-exclamation-triangle" style="color: var(--warning);"></i> <span>${op.stats.failed} failed</span></div>`;
-        
-        if (!statsHtml) statsHtml = '<div style="color: var(--text-muted);"><i class="fas fa-check-circle"></i> No changes</div>';
-        
-        // Build progress bar for smart-copy
-        let progressHtml = '';
-        if (op.mode === 'Smart Copy' && op.stats.total) {
-            const percent = op.stats.percent || (op.stats.current / op.stats.total * 100);
-            const remaining = op.stats.total - (op.stats.copied || 0) - (op.stats.skipped || 0);
-            progressHtml = `
-                <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border-subtle);">
-                    <div style="display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 12px;">
-                        <span>Progress: ${op.stats.copied || 0}/${op.stats.total} ${remaining > 0 ? `(${remaining} remaining)` : ''}</span>
-                        <span style="color: var(--accent); font-weight: 600;">${percent.toFixed(1)}%</span>
-                    </div>
-                    <div style="width: 100%; height: 6px; background: rgba(0,0,0,0.3); border-radius: 3px; overflow: hidden;">
-                        <div style="height: 100%; background: linear-gradient(90deg, var(--info), var(--success)); width: ${percent}%; transition: width 300ms ease;"></div>
-                    </div>
+    function renderStats(stats) {
+        const parts = STAT_LABELS
+            .filter(([key]) => (stats || {})[key] > 0)
+            .map(([key, label, icon, color]) => `
+                <div style="display: flex; align-items: center; gap: 6px;">
+                    <i class="fas ${icon}" style="color: ${color};"></i>
+                    <span>${escapeHtml(stats[key])} ${escapeHtml(label)}</span>
                 </div>
-            `;
+            `);
+        
+        return parts.length
+            ? parts.join('')
+            : '<div style="color: var(--text-muted);"><i class="fas fa-check-circle"></i> No changes</div>';
+    }
+    
+    function renderResult(result, logs) {
+        const container = document.getElementById('operations-container');
+        
+        if (!result) {
+            container.innerHTML = '<pre class="run-log" id="run-log"></pre>';
+            showLiveLog(logs);
+            return;
         }
         
-        const opCard = document.createElement('div');
-        opCard.className = 'operation-card';
-        opCard.setAttribute('data-op-id', opId);
-        opCard.setAttribute('data-op-data', JSON.stringify(op));
-        opCard.setAttribute('data-op-log', JSON.stringify(op.logLines || []));
-        opCard.innerHTML = `
-            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
-                <span class="operation-mode ${modeClass}">
-                    <i class="fas fa-arrow-right"></i> ${op.mode}
-                </span>
-                <div style="display: flex; align-items: center; gap: 8px;">
-                    <button class="btn btn-secondary btn-sm" onclick="toggleOperationDetails('${opId}')" style="cursor: pointer;">
-                        <i class="fas fa-expand-alt"></i> Expand
-                    </button>
-                    ${isDryRun ? '<span style="background: rgba(245,158,11,0.15); color: var(--warning); padding: 4px 10px; border-radius: 12px; font-size: 11px; font-weight: 600;"><i class="fas fa-eye"></i> DRY RUN</span>' : ''}
+        const stats = result.stats || {};
+        ['copied', 'skipped', 'deleted', 'errors'].forEach(key => {
+            const el = document.getElementById(`stat-${key}`);
+            if (el) el.textContent = stats[key] || 0;
+        });
+        
+        // The badge is a fact from the run, not a substring of its output.
+        const dryRunBadge = result.dry_run
+            ? '<span class="dry-run-badge"><i class="fas fa-eye"></i> DRY RUN</span>'
+            : '';
+        
+        const rules = result.rules || [];
+        const cards = rules.map((rule, index) => `
+            <div class="operation-card">
+                <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
+                    <span class="operation-mode ${escapeHtml(rule.mode)}">
+                        <i class="fas fa-${getModeIcon(rule.mode)}"></i> ${escapeHtml(getModeLabel(rule.mode))}
+                    </span>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <span style="color: var(--text-muted); font-size: 12px;">${escapeHtml(rule.id)}</span>
+                        <button class="btn btn-secondary btn-sm" data-rule-index="${index}">
+                            <i class="fas fa-expand-alt"></i> Expand
+                        </button>
+                        ${dryRunBadge}
+                    </div>
+                </div>
+                <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px; font-size: 13px; color: var(--text-muted);">
+                    <i class="fas fa-mobile-alt"></i> ${escapeHtml(rule.phone_path)}
+                    <i class="fas fa-arrow-right"></i>
+                    <i class="fas fa-desktop"></i> ${escapeHtml(rule.desktop_path)}
+                </div>
+                ${rule.error ? `<div class="alert alert-danger">${escapeHtml(rule.error)}</div>` : ''}
+                <div style="display: flex; flex-wrap: wrap; gap: 16px; font-size: 13px;">${renderStats(rule.stats)}</div>
+            </div>
+        `).join('');
+        
+        const empty = rules.length === 0 ? `
+            <div style="text-align: center; padding: 40px; color: var(--text-muted);">
+                <i class="fas fa-check-circle" style="font-size: 48px; color: var(--success); margin-bottom: 16px;"></i>
+                <h3 style="color: var(--text);">${result.profile ? 'No Rules Ran' : 'No Device Matched'}</h3>
+                <p>${result.profile ? 'Nothing was selected to run' : 'Connect a registered phone and try again'}</p>
+            </div>
+        ` : '';
+        
+        container.innerHTML = `${empty}${cards}<pre class="run-log" id="run-log"></pre>`;
+        showLiveLog(logs);
+    }
+    
+    // One delegated handler for every Expand button.
+    document.getElementById('operations-container').addEventListener('click', (event) => {
+        const button = event.target.closest('button[data-rule-index]');
+        if (button) openRuleDetails(Number(button.dataset.ruleIndex));
+    });
+    
+    function openRuleDetails(index) {
+        closeRuleDetails();
+        
+        const rule = lastResult && (lastResult.rules || [])[index];
+        if (!rule) return;
+        
+        const groups = {};
+        (rule.files || []).forEach(file => {
+            (groups[file.action] = groups[file.action] || []).push(file);
+        });
+        
+        const sections = Object.entries(groups).map(([action, files]) => `
+            <div style="background: rgba(0,0,0,0.2); border: 1px solid var(--border-subtle); border-radius: var(--radius-card); padding: 16px; margin-bottom: 16px;">
+                <h4 style="margin: 0 0 12px 0; color: var(--text); display: flex; align-items: center; gap: 8px;">
+                    <i class="fas ${ACTION_ICONS[action] || 'fa-file'}"></i> ${escapeHtml(action)} (${files.length})
+                </h4>
+                <div style="max-height: 400px; overflow-y: auto;">
+                    ${files.map(file => `
+                        <div class="file-row">
+                            <div>${escapeHtml(file.src)}</div>
+                            ${file.dst ? `<div style="color: var(--success);"><i class="fas fa-arrow-right"></i> ${escapeHtml(file.dst)}</div>` : ''}
+                            ${file.error ? `<div style="color: var(--danger);">${escapeHtml(file.error)}</div>` : ''}
+                        </div>
+                    `).join('')}
                 </div>
             </div>
-            <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px; font-size: 13px; color: var(--text-muted);">
-                <i class="fas fa-mobile-alt"></i> ${op.source} <i class="fas fa-arrow-right"></i> <i class="fas fa-desktop"></i> ${op.dest}
+        `).join('');
+        
+        const modal = document.createElement('div');
+        modal.id = 'op-detail-modal';
+        modal.style.cssText = 'position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.8); z-index: 1001; overflow: auto; display: flex; align-items: center; justify-content: center;';
+        modal.innerHTML = `
+            <div style="position: relative; max-width: 900px; width: 90%; max-height: 85vh; overflow: auto; background: var(--surface); border-radius: var(--radius-card); padding: 24px; box-shadow: 0 20px 60px rgba(0,0,0,0.4);">
+                <button id="op-detail-close" style="position: absolute; top: 20px; right: 20px; background: none; border: none; color: var(--text-muted); font-size: 24px; cursor: pointer;">
+                    <i class="fas fa-times"></i>
+                </button>
+                <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 20px;">
+                    <span class="operation-mode ${escapeHtml(rule.mode)}">
+                        <i class="fas fa-${getModeIcon(rule.mode)}"></i> ${escapeHtml(getModeLabel(rule.mode))}
+                    </span>
+                    <span style="color: var(--text-muted); font-size: 13px;">
+                        <i class="fas fa-mobile-alt"></i> ${escapeHtml(rule.phone_path)}
+                        <i class="fas fa-arrow-right"></i>
+                        <i class="fas fa-desktop"></i> ${escapeHtml(rule.desktop_path)}
+                    </span>
+                </div>
+                ${sections || '<p style="color: var(--text-muted);">No file-level details available</p>'}
             </div>
-            <div style="display: flex; gap: 16px; font-size: 13px;">${statsHtml}</div>
-            ${progressHtml}
         `;
-        container.appendChild(opCard);
+        
+        modal.addEventListener('click', (event) => {
+            if (event.target === modal || event.target.closest('#op-detail-close')) {
+                closeRuleDetails();
+            }
+        });
+        
+        document.body.appendChild(modal);
+    }
+    
+    function closeRuleDetails() {
+        const modal = document.getElementById('op-detail-modal');
+        if (modal) modal.remove();
     }
     
     function resetRunButton() {
@@ -1084,7 +1000,7 @@ let deviceStatus = null;
         
         try {
             // Load rules for this profile
-            const data = await apiGet(`/api/profiles/${deviceStatus.profile_name}/rules`);
+            const data = await apiGet(`/api/profiles/${encodeURIComponent(deviceStatus.profile_name)}/rules`);
             manualRules = (data.rules || []).filter(r => r.manual_only);
             
             const container = document.getElementById('manual-rules-list');
@@ -1102,17 +1018,18 @@ let deviceStatus = null;
             
             container.innerHTML = manualRules.map(rule => `
                 <label class="rule-checkbox-label">
-                    <input type="checkbox" value="${rule.id}" onchange="toggleRuleSelection('${rule.id}')">
+                    <input type="checkbox" value="${escapeHtml(rule.id)}" data-select-rule="${escapeHtml(rule.id)}">
                     <div style="flex: 1;">
                         <div style="font-weight: 600; color: var(--text); margin-bottom: 4px;">
-                            <span class="operation-mode ${rule.mode}" style="margin-right: 8px;">
-                                <i class="fas fa-${getModeIcon(rule.mode)}"></i> ${rule.mode.toUpperCase()}
+                            <span class="operation-mode ${escapeHtml(rule.mode)}" style="margin-right: 8px;">
+                                <i class="fas fa-${getModeIcon(rule.mode)}"></i> ${escapeHtml(getModeLabel(rule.mode))}
                             </span>
-                            ${rule.id}
+                            ${escapeHtml(rule.id)}
                         </div>
                         <div style="font-size: 13px; color: var(--text-muted);">
-                            <i class="fas fa-mobile-alt" style="width: 16px;"></i> ${rule.phone_path} → 
-                            <i class="fas fa-desktop" style="width: 16px;"></i> ${rule.desktop_path}
+                            <i class="fas fa-mobile-alt" style="width: 16px;"></i> ${escapeHtml(rule.phone_path)}
+                            <i class="fas fa-arrow-right"></i>
+                            <i class="fas fa-desktop" style="width: 16px;"></i> ${escapeHtml(rule.desktop_path)}
                         </div>
                     </div>
                 </label>
@@ -1122,6 +1039,11 @@ let deviceStatus = null;
             closeManualSelection();
         }
     }
+    
+    document.getElementById('manual-rules-list').addEventListener('change', (event) => {
+        const box = event.target.closest('[data-select-rule]');
+        if (box) toggleRuleSelection(box.dataset.selectRule);
+    });
     
     function closeManualSelection() {
         document.getElementById('manual-selection-card').style.display = 'none';
@@ -1169,13 +1091,12 @@ let deviceStatus = null;
         // Clear previous results
         document.getElementById('stats-card').style.display = 'none';
         document.getElementById('output-card').style.display = 'none';
-        document.getElementById('stat-copied').textContent = '0';
-        document.getElementById('stat-skipped').textContent = '0';
-        document.getElementById('stat-deleted').textContent = '0';
-        document.getElementById('stat-errors').textContent = '0';
-        document.getElementById('smart-copy-progress').style.display = 'none';
-        document.getElementById('operations-container').innerHTML = '';
-        displayedOperations.clear();
+        ['copied', 'skipped', 'deleted', 'errors'].forEach(key => {
+            document.getElementById(`stat-${key}`).textContent = '0';
+        });
+        lastResult = null;
+        document.getElementById('operations-container').innerHTML =
+            '<pre class="run-log" id="run-log"></pre>';
         
         // Run with specific rule IDs
         isRunning = true;
@@ -1204,6 +1125,7 @@ let deviceStatus = null;
         manualBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Running...';
         
         updateRunStatus('running', `Running ${selectedRuleIds.length} manual rule(s)...`);
+        setOperationPhase(options.dry_run ? 'Dry Run - Preview Only' : 'Executing Operations');
         
         try {
             const result = await apiPost('/api/run', {
@@ -1227,7 +1149,13 @@ let deviceStatus = null;
     }
     
     function getModeIcon(mode) {
-        return { move: 'arrow-right', copy: 'copy', smart_copy: 'lightbulb', sync: 'sync' }[mode] || 'cog';
+        return { move: 'arrow-right', copy: 'copy', backup: 'save',
+                 smart_copy: 'save', sync: 'sync' }[mode] || 'cog';
+    }
+    
+    function getModeLabel(mode) {
+        return { move: 'Move', copy: 'Copy', backup: 'Backup',
+                 smart_copy: 'Backup', sync: 'Sync' }[mode] || mode;
     }
     
     // Keyboard shortcuts
@@ -1236,7 +1164,9 @@ let deviceStatus = null;
             // Check which modal/card is open and close it
             const manualCard = document.getElementById('manual-selection-card');
             
-            if (previewExpanded) {
+            if (document.getElementById('op-detail-modal')) {
+                closeRuleDetails();
+            } else if (previewExpanded) {
                 toggleRulesPreview();
             } else if (manualCard && manualCard.style.display !== 'none') {
                 closeManualSelection();
@@ -1252,221 +1182,7 @@ let deviceStatus = null;
     // Auto-refresh every 5 seconds
     setInterval(loadDeviceStatus, 5000);
     
-    // Per-operation expand functions
-    let expandedModalId = null;
-    
-    function toggleOperationDetails(opId) {
-        const existingModal = document.getElementById('op-detail-modal');
-        if (existingModal) {
-            existingModal.remove();
-            if (expandedModalId === opId) {
-                expandedModalId = null;
-                return;
-            }
-        }
-        
-        expandedModalId = opId;
-        const opCard = document.querySelector(`[data-op-id="${opId}"]`);
-        if (!opCard) return;
-        
-        const opData = JSON.parse(opCard.getAttribute('data-op-data'));
-        const opLog = JSON.parse(opCard.getAttribute('data-op-log'));
-        
-        const modal = createOperationModal(opId, opData, opLog);
-        document.body.appendChild(modal);
-    }
-    
-    function createOperationModal(opId, opData, opLog) {
-        const modal = document.createElement('div');
-        modal.id = 'op-detail-modal';
-        modal.style.cssText = 'position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.8); z-index: 1001; overflow: auto; display: flex; align-items: center; justify-content: center;';
-        modal.onclick = (e) => {
-            if (e.target === modal) toggleOperationDetails(opId);
-        };
-        
-        const operations = parseOperationLog(opLog);
-        const detailsHtml = buildOperationDetails(operations);
-        
-        const modeClass = opData.mode.toLowerCase().replace(' ', '_');
-        
-        modal.innerHTML = `
-            <div style="position: relative; max-width: 900px; width: 90%; background: var(--surface); border-radius: var(--radius-card); padding: 24px; box-shadow: 0 20px 60px rgba(0,0,0,0.4);">
-                <button onclick="document.getElementById('op-detail-modal').onclick({target: document.getElementById('op-detail-modal')})" style="position: absolute; top: 20px; right: 20px; background: none; border: none; color: var(--text-muted); font-size: 24px; cursor: pointer; padding: 0; width: 24px; height: 24px;">
-                    <i class="fas fa-times"></i>
-                </button>
-                
-                <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 20px;">
-                    <span class="operation-mode ${modeClass}">
-                        <i class="fas fa-${getModeIcon(opData.mode)}"></i> ${opData.mode}
-                    </span>
-                    <span style="color: var(--text-muted); font-size: 13px;">
-                        <i class="fas fa-mobile-alt"></i> ${opData.source} <i class="fas fa-arrow-right"></i> <i class="fas fa-desktop"></i> ${opData.dest}
-                    </span>
-                </div>
-                
-                ${detailsHtml}
-            </div>
-        `;
-        
-        // Close with Escape
-        const handleEscape = (e) => {
-            if (e.key === 'Escape') {
-                modal.remove();
-                expandedModalId = null;
-                document.removeEventListener('keydown', handleEscape);
-            }
-        };
-        document.addEventListener('keydown', handleEscape);
-        
-        return modal;
-    }
-    
-    function parseOperationLog(logLines) {
-        const operations = {
-            'Files Copying': [],
-            'Folders': [],
-            'Files Deleting': [],
-            'Files Skipped': [],
-            'Sync Summary': []
-        };
-        
-        let hasSyncDetails = false;
-        let smartCopyFiles = [];
-        
-        for (let line of logLines) {
-            // Keep original line for checking, but also trim for parsing
-            const trimmed = line.trim();
-            if (!trimmed) continue;
-            
-            // For sync operations, check if we have detailed file listing
-            if (trimmed.includes('⊙') && trimmed.includes('unchanged')) {
-                hasSyncDetails = true;
-            }
-            
-            // Skip most summary lines but not sync-specific ones
-            if (trimmed.match(/^✓\s+(Copied|Deleted|Renamed|Folders):|^×|^📊|^\[DRY/)) {
-                continue;
-            }
-            
-            // Parse sync summary info
-            if (trimmed.match(/^✓\s+Synced:|^⊙\s+Skipped:|Cleaned:/)) {
-                operations['Sync Summary'].push({ details: trimmed });
-                continue;
-            }
-            
-            // Parse Smart Copy progress lines: [NNN/MMM - X.X%] filename
-            const smartCopyMatch = trimmed.match(/^\[(\d+)\/(\d+)\s*-\s*[\d.]+%\]\s+(.+)$/);
-            if (smartCopyMatch) {
-                const filename = smartCopyMatch[3];
-                if (filename && !smartCopyFiles.includes(filename)) {
-                    smartCopyFiles.push(filename);
-                    operations['Files Copying'].push({ source: filename, dest: '✓' });
-                }
-                continue;
-            }
-            
-            // Parse folder/directory entries (📦 symbol)
-            if (trimmed.includes('📦')) {
-                const parts = trimmed.split(/→|->/);
-                if (parts.length === 2) {
-                    const folder = parts[0].replace('📦', '').trim();
-                    const dest = parts[1].trim();
-                    if (folder && dest) {
-                        operations['Folders'].push({ folder, dest });
-                    }
-                }
-            }
-            // Parse copied files (→ arrow with leading spaces/indentation)
-            else if (trimmed.match(/^→\s/) && trimmed.includes('→')) {
-                const parts = trimmed.replace(/^→\s+/, '').split(/→|->/);
-                if (parts.length === 2) {
-                    const source = parts[0].trim();
-                    const dest = parts[1].trim();
-                    if (source && dest) {
-                        operations['Files Copying'].push({ source, dest });
-                    }
-                }
-            }
-            // Parse deleted files (× symbol)
-            else if (trimmed.match(/^×\s/)) {
-                const file = trimmed.replace(/^×\s+/, '').trim();
-                if (file) {
-                    operations['Files Deleting'].push({ file });
-                }
-            }
-            // Parse skipped files (⊙ symbol) - sync operations show these for unchanged files
-            else if (trimmed.match(/^⊙\s/)) {
-                const file = trimmed.replace(/^⊙\s+/, '').replace(/\(unchanged\)/, '').trim();
-                if (file) {
-                    operations['Files Skipped'].push({ file });
-                }
-            }
-        }
-        
-        // If no detailed sync info was found, create a note about it
-        if (operations['Sync Summary'].length > 0 && !hasSyncDetails) {
-            operations['Sync Summary'].push({ 
-                details: 'Note: Sync operations only show summary in non-verbose mode. Individual file details are not available.' 
-            });
-        }
-        
-        return operations;
-    }
-    
-    function buildOperationDetails(operations) {
-        let html = '';
-        
-        for (const [category, items] of Object.entries(operations)) {
-            if (items.length === 0) continue;
-            
-            const icon = {
-                'Files Copying': 'fas fa-copy',
-                'Files Deleting': 'fas fa-trash',
-                'Files Skipped': 'fas fa-forward',
-                'Folders': 'fas fa-folder',
-                'Sync Summary': 'fas fa-info-circle'
-            }[category] || 'fas fa-file';
-            
-            html += `
-                <div style="background: rgba(0,0,0,0.2); border: 1px solid var(--border-subtle); border-radius: var(--radius-card); padding: 16px; margin-bottom: 16px;">
-                    <h4 style="margin: 0 0 12px 0; color: var(--text); display: flex; align-items: center; gap: 8px;">
-                        <i class="${icon}"></i> ${category} (${items.length})
-                    </h4>
-                    <div style="max-height: 400px; overflow-y: auto;">
-                        ${items.map(item => {
-                            if (item.folder && item.dest) {
-                                return `<div style="margin-bottom: 8px; padding: 8px; background: rgba(0,0,0,0.2); border-radius: 4px; font-size: 12px; font-family: monospace;">
-                                    <div style="color: var(--text-muted); margin-bottom: 2px;">📁 ${item.folder}/</div>
-                                    <div style="color: var(--success); display: flex; align-items: center; gap: 4px;"><i class="fas fa-arrow-right"></i> ${item.dest}</div>
-                                </div>`;
-                            } else if (item.source && item.dest) {
-                                return `<div style="margin-bottom: 8px; padding: 8px; background: rgba(0,0,0,0.2); border-radius: 4px; font-size: 12px; font-family: monospace;">
-                                    <div style="color: var(--text-muted); margin-bottom: 2px;">📄 ${item.source}</div>
-                                    <div style="color: var(--success); display: flex; align-items: center; gap: 4px;"><i class="fas fa-arrow-right"></i> ${item.dest}</div>
-                                </div>`;
-                            } else if (item.file) {
-                                return `<div style="margin-bottom: 4px; padding: 6px; background: rgba(0,0,0,0.2); border-radius: 4px; font-size: 12px; font-family: monospace;">${item.file}</div>`;
-                            } else if (item.details) {
-                                return `<div style="margin-bottom: 4px; padding: 6px; background: rgba(0,0,0,0.2); border-radius: 4px; font-size: 12px; color: var(--text);">${item.details}</div>`;
-                            }
-                            return '';
-                        }).join('')}
-                    </div>
-                </div>
-            `;
-        }
-        
-        return html || '<p style="color: var(--text-muted);">No file-level details available</p>';
-    }
-    
     // Cleanup
     window.addEventListener('beforeunload', () => {
         stopPolling();
-    });
-    
-    // Close modal with escape key
-    document.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape' && isResultsExpanded) {
-            toggleResultsExpanded();
-        }
     });

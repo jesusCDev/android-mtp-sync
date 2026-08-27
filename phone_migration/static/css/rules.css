@@ -32,6 +32,7 @@
     
     .rule-mode.move { color: #60A5FA; border-color: rgba(96,165,250,0.3); }
     .rule-mode.copy { color: #22C55E; border-color: rgba(34,197,94,0.3); }
+    .rule-mode.backup { color: #F59E0B; border-color: rgba(245,158,11,0.3); }
     .rule-mode.smart_copy { color: #F59E0B; border-color: rgba(245,158,11,0.3); }
     .rule-mode.sync { color: #8B5CF6; border-color: rgba(139,92,246,0.3); }
     

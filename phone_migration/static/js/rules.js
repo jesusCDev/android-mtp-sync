@@ -39,7 +39,7 @@ let currentProfile = null;
         try {
             // Load rules and status (with validation warnings)
             const [data, status] = await Promise.all([
-                apiGet(`/api/profiles/${currentProfile}/rules`),
+                apiGet(`/api/profiles/${encodeURIComponent(currentProfile)}/rules`),
                 apiGet('/api/status')
             ]);
             const rules = data.rules || [];
@@ -66,7 +66,7 @@ let currentProfile = null;
             });
             
             // Order of display
-            const modeOrder = ['move', 'copy', 'smart_copy', 'sync'];
+            const modeOrder = ['move', 'copy', 'backup', 'smart_copy', 'sync'];
             let html = '';
             
             modeOrder.forEach(mode => {
@@ -88,19 +88,19 @@ let currentProfile = null;
                                     <div class="rule-card" ${hasWarnings ? 'style="border-left: 3px solid var(--warning);"' : ''}>
                                         <div class="rule-header">
                                             <div style="display: flex; align-items: center; gap: 12px;">
-                                                <span class="rule-mode ${rule.mode}">
+                                                <span class="rule-mode ${escapeHtml(rule.mode)}">
                                                     <i class="fas fa-${getModeIcon(rule.mode)}"></i>
-                                                    ${getModeLabel(rule.mode)}
+                                                    ${escapeHtml(getModeLabel(rule.mode))}
                                                 </span>
                                                 ${rule.manual_only ? '<span class="badge-manual"><i class="fas fa-hand-paper"></i> Manual</span>' : ''}
                                                 ${hasWarnings ? '<span style="background: rgba(255, 193, 7, 0.2); color: var(--warning); padding: 4px 8px; border-radius: 4px; font-size: 11px; font-weight: 600;"><i class="fas fa-exclamation-triangle"></i> ISSUE</span>' : ''}
                                             </div>
-                                            <span style="color: var(--text-muted); font-size: 13px;">${rule.id}</span>
+                                            <span style="color: var(--text-muted); font-size: 13px;">${escapeHtml(rule.id)}</span>
                                         </div>
                                         ${hasWarnings ? `
                                             <div style="background: rgba(255, 193, 7, 0.1); border-radius: 6px; padding: 10px; margin: 12px 0; border: 1px solid rgba(255, 193, 7, 0.3);">
                                                 <div style="color: var(--warning); font-size: 12px; font-weight: 600; margin-bottom: 6px;"><i class="fas fa-exclamation-triangle"></i> Configuration Issues:</div>
-                                                ${ruleWarnings.map(w => `<div style="color: var(--text-muted); font-size: 12px; margin-left: 16px;">• ${w.message}</div>`).join('')}
+                                                ${ruleWarnings.map(w => `<div style="color: var(--text-muted); font-size: 12px; margin-left: 16px;">${escapeHtml(w.message)}</div>`).join('')}
                                             </div>
                                         ` : ''}
                                         
@@ -109,33 +109,33 @@ let currentProfile = null;
                                                 <!-- Sync: desktop → phone -->
                                                 <div class="rule-path">
                                                     <i class="fas fa-desktop" style="color: var(--icon-idle); width: 16px;"></i>
-                                                    <span>${rule.desktop_path.replace(/\/home\/[^\/]+/, '~')}</span>
+                                                    <span>${escapeHtml((rule.desktop_path || '').replace(/\/home\/[^\/]+/, '~'))}</span>
                                                 </div>
                                                 <div class="rule-path" style="color: var(--text-muted); font-size: 13px;">
                                                     <i class="fas fa-arrow-right" style="width: 16px;"></i>
                                                 </div>
                                                 <div class="rule-path">
                                                     <i class="fas fa-mobile-alt" style="color: var(--icon-idle); width: 16px;"></i>
-                                                    <span>${rule.phone_path}</span>
+                                                    <span>${escapeHtml(rule.phone_path)}</span>
                                                 </div>
                                             ` : `
                                                 <!-- Move/Copy/Backup: phone → desktop -->
                                                 <div class="rule-path">
                                                     <i class="fas fa-mobile-alt" style="color: var(--icon-idle); width: 16px;"></i>
-                                                    <span>${rule.phone_path}</span>
+                                                    <span>${escapeHtml(rule.phone_path)}</span>
                                                 </div>
                                                 <div class="rule-path" style="color: var(--text-muted); font-size: 13px;">
                                                     <i class="fas fa-arrow-down" style="width: 16px;"></i>
                                                 </div>
                                                 <div class="rule-path">
                                                     <i class="fas fa-desktop" style="color: var(--icon-idle); width: 16px;"></i>
-                                                    <span>${rule.desktop_path.replace(/\/home\/[^\/]+/, '~')}</span>
+                                                    <span>${escapeHtml((rule.desktop_path || '').replace(/\/home\/[^\/]+/, '~'))}</span>
                                                 </div>
                                             `}
                                         </div>
                                         
                                         <div class="rule-actions">
-                                            <button class="btn btn-small btn-danger" onclick="deleteRule('${rule.id}')">
+                                            <button class="btn btn-small btn-danger" data-rule-id="${escapeHtml(rule.id)}">
                                                 <i class="fas fa-trash"></i> Delete
                                             </button>
                                         </div>
@@ -150,15 +150,23 @@ let currentProfile = null;
             
             document.getElementById('rules-container').innerHTML = html;
         } catch (error) {
-            document.getElementById('rules-container').innerHTML = `<div class="alert alert-danger">Error loading rules: ${error.message}</div>`;
+            document.getElementById('rules-container').innerHTML =
+                `<div class="alert alert-danger">Error loading rules: ${escapeHtml(error.message)}</div>`;
         }
     }
+
+    // One delegated handler beats an inline onclick per rule card.
+    document.getElementById('rules-container').addEventListener('click', (event) => {
+        const button = event.target.closest('button[data-rule-id]');
+        if (button) deleteRule(button.dataset.ruleId);
+    });
     
     function getModeIcon(mode) {
         const icons = {
             move: 'arrow-right',
             copy: 'copy',
-            smart_copy: 'lightbulb',
+            backup: 'save',
+            smart_copy: 'save',
             sync: 'sync'
         };
         return icons[mode] || 'cog';
@@ -168,7 +176,8 @@ let currentProfile = null;
         const labels = {
             move: 'Move',
             copy: 'Copy',
-            smart_copy: 'Smart Copy',
+            backup: 'Backup',
+            smart_copy: 'Backup',
             sync: 'Sync'
         };
         return labels[mode] || mode;
@@ -198,21 +207,16 @@ let currentProfile = null;
         const manualOnly = document.getElementById('manual-only').checked;
         
         try {
-            const result = await apiPost('/api/rules', {
+            await apiPost('/api/rules', {
                 profile: currentProfile,
                 mode: mode,
                 phone_path: phonePath,
                 desktop_path: desktopPath,
                 manual_only: manualOnly
             });
-            
-            if (result.success) {
-                showAlert('Rule added successfully!', 'success');
-                closeModal();
-                loadRules();
-            } else {
-                showAlert(result.error || 'Failed to add rule', 'danger');
-            }
+            showAlert('Rule added successfully!', 'success');
+            closeModal();
+            loadRules();
         } catch (error) {
             showAlert('Error: ' + error.message, 'danger');
         }
@@ -224,29 +228,13 @@ let currentProfile = null;
         }
         
         try {
-            const result = await apiDelete(`/api/rules/${currentProfile}/${ruleId}`);
-            
-            if (result.success) {
-                showAlert('Rule deleted successfully!', 'success');
-                loadRules();
-            } else {
-                showAlert(result.error || 'Failed to delete rule', 'danger');
-            }
+            await apiDelete(`/api/rules/${encodeURIComponent(currentProfile)}/`
+                            + encodeURIComponent(ruleId));
+            showAlert('Rule deleted successfully!', 'success');
+            loadRules();
         } catch (error) {
             showAlert('Error: ' + error.message, 'danger');
         }
-    }
-    
-    function showAlert(message, type = 'success') {
-        const alertDiv = document.createElement('div');
-        alertDiv.className = `alert alert-${type}`;
-        alertDiv.textContent = message;
-        alertDiv.style.marginBottom = '12px';
-        
-        const container = document.getElementById('alert-container');
-        container.appendChild(alertDiv);
-        
-        setTimeout(() => alertDiv.remove(), 5000);
     }
     
     // Close modal on escape key
@@ -346,12 +334,7 @@ let currentProfile = null;
         try {
             const endpoint = browserState.type === 'phone' ? '/api/browse/phone' : '/api/browse/desktop';
             const params = new URLSearchParams({ path: path || '/' });
-            const response = await fetch(`${endpoint}?${params}`);
-            const data = await response.json();
-            
-            if (!response.ok) {
-                throw new Error(data.error || 'Failed to load directory');
-            }
+            const data = await apiGet(`${endpoint}?${params}`);
             
             // Update current path from response
             browserState.currentPath = data.path;
@@ -382,9 +365,9 @@ let currentProfile = null;
                     const symlinkBadge = entry.is_symlink ? '<i class="fas fa-link" style="font-size: 10px; color: #F59E0B; margin-left: 4px;" title="Symbolic link"></i>' : '';
                     
                     return `
-                        <div class="browser-entry type-${entry.type} ${disabledClass}" 
+                        <div class="browser-entry type-${escapeHtml(entry.type)} ${disabledClass}" 
                              data-path="${escapeHtml(entry.path)}" 
-                             data-type="${entry.type}">
+                             data-type="${escapeHtml(entry.type)}">
                             <i class="fas ${icon}"></i>
                             <span>${escapeHtml(entry.name)}${symlinkBadge}</span>
                         </div>
@@ -396,9 +379,7 @@ let currentProfile = null;
                 // Add click handlers after rendering
                 listEl.querySelectorAll('.browser-entry.type-dir').forEach(entryEl => {
                     entryEl.addEventListener('click', function() {
-                        const path = this.getAttribute('data-path');
-                        const type = this.getAttribute('data-type');
-                        handleEntryClick(path, type);
+                        handleEntryClick(this);
                     });
                 });
             }
@@ -414,26 +395,19 @@ let currentProfile = null;
         }
     }
     
-    function handleEntryClick(path, type) {
-        if (type !== 'dir') return;
+    function handleEntryClick(entryEl) {
+        const path = entryEl.dataset.path;
+        if (entryEl.dataset.type !== 'dir') return;
         
-        // Check if already selected - if so, navigate into it
+        // Second click on the already-selected folder navigates into it
         if (browserState.selectedPath === path) {
             loadBrowserDirectory(path);
-        } else {
-            // Single click - select it
-            browserState.selectedPath = path;
-            
-            // Update UI
-            document.querySelectorAll('.browser-entry').forEach(el => {
-                el.classList.remove('selected');
-            });
-            
-            const clickedEntry = document.querySelector(`.browser-entry[data-path="${path.replace(/"/g, '\\"')}"]`);
-            if (clickedEntry) {
-                clickedEntry.classList.add('selected');
-            }
+            return;
         }
+        
+        browserState.selectedPath = path;
+        document.querySelectorAll('.browser-entry').forEach(el => el.classList.remove('selected'));
+        entryEl.classList.add('selected');
     }
     
     function goUpOneLevel() {
@@ -498,12 +472,6 @@ let currentProfile = null;
         closeBrowser();
     }
     
-    function escapeHtml(text) {
-        const div = document.createElement('div');
-        div.textContent = text;
-        return div.innerHTML;
-    }
-    
     function navigateToTypedPath() {
         const pathInput = document.getElementById('browser-path-input');
         const path = pathInput.value.trim();
@@ -532,27 +500,15 @@ let currentProfile = null;
         
         const newFolderPath = browserState.currentPath + (browserState.currentPath.endsWith('/') ? '' : '/') + folderName.trim();
         
+        if (browserState.type !== 'desktop') {
+            showAlert('Creating folders on phone is not supported yet', 'info');
+            return;
+        }
+        
         try {
-            // For desktop, we can create folders via an API endpoint
-            if (browserState.type === 'desktop') {
-                const response = await fetch('/api/folder/create', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ path: newFolderPath })
-                });
-                
-                const result = await response.json();
-                
-                if (response.ok && result.success) {
-                    showAlert('Folder created successfully!', 'success');
-                    // Refresh current directory
-                    loadBrowserDirectory(browserState.currentPath);
-                } else {
-                    showAlert(result.error || 'Failed to create folder', 'danger');
-                }
-            } else {
-                showAlert('Creating folders on phone is not supported yet', 'info');
-            }
+            await apiPost('/api/folder/create', { path: newFolderPath });
+            showAlert('Folder created successfully!', 'success');
+            loadBrowserDirectory(browserState.currentPath);
         } catch (error) {
             showAlert('Error: ' + error.message, 'danger');
         }
@@ -576,17 +532,33 @@ let currentProfile = null;
     // Bookmarks Functionality
     // ========================================
     
+    // Static markup: no server data in it, so no escaping question to get wrong.
+    const QUICK_MOUNTS_HTML = `
+        <button class="bookmark-btn" data-bookmark-path="/mnt" title="Mounted devices">
+            <i class="fas fa-hdd"></i> /mnt
+        </button>
+        <button class="bookmark-btn" data-bookmark-path="~" title="Home directory">
+            <i class="fas fa-home"></i> Home
+        </button>
+    `;
+    
+    // One delegated handler for every bookmark button, quick mounts included.
+    document.getElementById('bookmarks-list').addEventListener('click', (event) => {
+        const remove = event.target.closest('[data-bookmark-remove]');
+        if (remove) {
+            event.stopPropagation();
+            deleteBookmark(Number(remove.dataset.bookmarkRemove));
+            return;
+        }
+        const button = event.target.closest('[data-bookmark-path]');
+        if (button) navigateToBookmark(button.dataset.bookmarkPath);
+    });
+    
     async function loadBookmarks() {
         if (!browserState.type) return;
         
         try {
-            const response = await fetch(`/api/bookmarks/${browserState.type}`);
-            const data = await response.json();
-            
-            if (!response.ok) {
-                console.error('Failed to load bookmarks:', data.error);
-                return;
-            }
+            const data = await apiGet(`/api/bookmarks/${encodeURIComponent(browserState.type)}`);
             
             const bookmarksList = document.getElementById('bookmarks-list');
             const bookmarksSection = document.getElementById('bookmarks-section');
@@ -595,24 +567,13 @@ let currentProfile = null;
                 bookmarksSection.style.display = 'block';
                 
                 // Add mount shortcuts for desktop
-                let mountsHtml = '';
-                if (browserState.type === 'desktop') {
-                    // Add common mounts
-                    mountsHtml = `
-                        <button class="bookmark-btn" onclick="navigateToBookmark('/mnt')" title="Mounted devices">
-                            <i class="fas fa-hdd"></i> /mnt
-                        </button>
-                        <button class="bookmark-btn" onclick="navigateToBookmark('${escapeHtml(window.location.pathname.includes('home') ? '~' : '/')}')" title="Home directory">
-                            <i class="fas fa-home"></i> Home
-                        </button>
-                    `;
-                }
+                const mountsHtml = browserState.type === 'desktop' ? QUICK_MOUNTS_HTML : '';
                 
                 const bookmarksHtml = data.bookmarks.map((bookmark, index) => `
-                    <button class="bookmark-btn" onclick="navigateToBookmark('${escapeHtml(bookmark.path)}')" title="${escapeHtml(bookmark.path)}">
+                    <button class="bookmark-btn" data-bookmark-path="${escapeHtml(bookmark.path)}" title="${escapeHtml(bookmark.path)}">
                         <i class="fas fa-star" style="font-size: 10px; color: #F59E0B;"></i>
                         ${escapeHtml(bookmark.name)}
-                        <i class="fas fa-times" onclick="event.stopPropagation(); deleteBookmark(${index})" style="font-size: 10px; margin-left: 4px; opacity: 0.6;" title="Remove bookmark"></i>
+                        <i class="fas fa-times" data-bookmark-remove="${index}" style="font-size: 10px; margin-left: 4px; opacity: 0.6;" title="Remove bookmark"></i>
                     </button>
                 `).join('');
                 
@@ -621,14 +582,7 @@ let currentProfile = null;
                 // Still show mount shortcuts for desktop even without bookmarks
                 if (browserState.type === 'desktop') {
                     bookmarksSection.style.display = 'block';
-                    bookmarksList.innerHTML = `
-                        <button class="bookmark-btn" onclick="navigateToBookmark('/mnt')" title="Mounted devices">
-                            <i class="fas fa-hdd"></i> /mnt
-                        </button>
-                        <button class="bookmark-btn" onclick="navigateToBookmark('~')" title="Home directory">
-                            <i class="fas fa-home"></i> Home
-                        </button>
-                    `;
+                    bookmarksList.innerHTML = QUICK_MOUNTS_HTML;
                 } else {
                     bookmarksSection.style.display = 'none';
                 }
@@ -648,20 +602,10 @@ let currentProfile = null;
         const path = browserState.currentPath;
         
         try {
-            const response = await fetch(`/api/bookmarks/${browserState.type}`, {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ name: name.trim(), path: path })
-            });
-            
-            const result = await response.json();
-            
-            if (response.ok && result.success) {
-                showAlert('Bookmark added successfully!', 'success');
-                loadBookmarks();
-            } else {
-                showAlert(result.error || 'Failed to add bookmark', 'danger');
-            }
+            await apiPost(`/api/bookmarks/${encodeURIComponent(browserState.type)}`,
+                          { name: name.trim(), path: path });
+            showAlert('Bookmark added successfully!', 'success');
+            loadBookmarks();
         } catch (error) {
             showAlert('Error: ' + error.message, 'danger');
         }
@@ -673,18 +617,10 @@ let currentProfile = null;
         }
         
         try {
-            const response = await fetch(`/api/bookmarks/${browserState.type}/${index}`, {
-                method: 'DELETE'
-            });
-            
-            const result = await response.json();
-            
-            if (response.ok && result.success) {
-                showAlert('Bookmark removed', 'success');
-                loadBookmarks();
-            } else {
-                showAlert(result.error || 'Failed to remove bookmark', 'danger');
-            }
+            await apiDelete(`/api/bookmarks/${encodeURIComponent(browserState.type)}/`
+                            + encodeURIComponent(index));
+            showAlert('Bookmark removed', 'success');
+            loadBookmarks();
         } catch (error) {
             showAlert('Error: ' + error.message, 'danger');
         }

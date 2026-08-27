@@ -34,7 +34,9 @@
             {% block content %}{% endblock %}
         </div>
     </main>
-    
+
+    <div id="alert-container"></div>
+
     <script src="{{ url_for('static', filename='js/main.js') }}?v={{ range(1, 10000) | random }}"></script>
     {% block extra_scripts %}{% endblock %}
 </body>
