@@ -13,7 +13,7 @@ None.
 
 ## REMAINING (user-only items)
 1. DONE: pushed (and force-pushed after the rewrite).
-2. DONE: junk deleted, v1 branch deleted, tests/res/icons PNGs removed (73aa2b1). Still tracked: 9 PNGs under tests/res/archive/ (not requested).
+2. DONE: junk deleted, v1 branch deleted, tests/res/icons PNGs removed (73aa2b1). tests/res/ (icons + archive PNGs) purged from history 2026-08-26 23:55 and force-pushed; second pre-rewrite bundle in .superpowers/sdd/.
 3. DONE 2026-08-26 22:45: history rewritten with git-filter-repo to purge tests/videos, force-pushed; pre-rewrite bundle kept at .superpowers/pre-rewrite-*.bundle (gitignored). Any other clone must re-clone.
 4. Deferred minors are listed in the ledger (all triaged "leave").
 
